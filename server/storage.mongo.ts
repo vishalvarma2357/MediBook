@@ -25,9 +25,210 @@ export class MongoStorage implements IStorage {
       secret: process.env.SESSION_SECRET || 'medibook-session-secret'
     });
     
-    // Note: Seeding is disabled until MongoDB is properly set up
-    // You'll need to manually seed data after connecting to your MongoDB instance
-    console.log('[storage] MongoDB storage initialized, but seeding is disabled');
+    // Seed initial data
+    this.seedInitialData();
+  }
+  
+  private async seedInitialData() {
+    try {
+      // Seed specializations
+      const specializationCount = await Specialization.countDocuments();
+      if (specializationCount === 0) {
+        const specializations = [
+          "Cardiology", "Neurology", "Dermatology", "Orthopedics", 
+          "Pediatrics", "Psychiatry", "Gynecology", "Ophthalmology",
+          "Dentistry", "General Practice"
+        ];
+        
+        for (const name of specializations) {
+          await Specialization.create({ 
+            id: specializations.indexOf(name) + 1,
+            name 
+          });
+        }
+        
+        console.log('[database] Specializations seeded successfully');
+      }
+      
+      // Check if admin user exists
+      const adminExists = await User.findOne({ username: "admin" });
+      
+      if (!adminExists) {
+        // Add admin user
+        const hashedPassword = "adminpassword"; // Note: In a real app, this would be hashed
+        await User.create({
+          id: 1,
+          username: "admin",
+          password: hashedPassword,
+          email: "admin@medibook.com",
+          firstName: "Admin",
+          lastName: "User",
+          role: UserRole.ADMIN,
+          createdAt: new Date()
+        });
+        
+        console.log('[database] Admin user seeded successfully');
+      }
+
+      // Seed some sample doctors
+      const doctorCount = await User.countDocuments({ role: UserRole.DOCTOR });
+      if (doctorCount === 0) {
+        // Create sample doctors
+        const sampleDoctors = [
+          {
+            user: {
+              id: 2,
+              username: "dr.smith",
+              password: "password123", // In real app, would be hashed
+              email: "dr.smith@medibook.com",
+              firstName: "John",
+              lastName: "Smith",
+              role: UserRole.DOCTOR,
+              createdAt: new Date()
+            },
+            profile: {
+              id: 1,
+              userId: 2,
+              specialization: "Cardiology",
+              hospital: "Heart & Vascular Center",
+              location: "123 Medical Blvd, New York, NY",
+              fee: 150,
+              experience: 15,
+              about: "Specialized in cardiovascular health with 15 years of experience.",
+              status: DoctorStatus.APPROVED,
+              rating: 4.8,
+              reviewCount: 124,
+              profileImageUrl: null,
+              officeImageUrl: null
+            }
+          },
+          {
+            user: {
+              id: 3,
+              username: "dr.johnson",
+              password: "password123", // In real app, would be hashed
+              email: "dr.johnson@medibook.com",
+              firstName: "Sarah",
+              lastName: "Johnson",
+              role: UserRole.DOCTOR,
+              createdAt: new Date()
+            },
+            profile: {
+              id: 2,
+              userId: 3,
+              specialization: "Neurology",
+              hospital: "Neuro Science Institute",
+              location: "456 Health St, Boston, MA",
+              fee: 180,
+              experience: 12,
+              about: "Specializing in neurological disorders and treatments.",
+              status: DoctorStatus.APPROVED,
+              rating: 4.6,
+              reviewCount: 98,
+              profileImageUrl: null,
+              officeImageUrl: null
+            }
+          },
+          {
+            user: {
+              id: 4,
+              username: "dr.patel",
+              password: "password123", // In real app, would be hashed
+              email: "dr.patel@medibook.com",
+              firstName: "Raj",
+              lastName: "Patel",
+              role: UserRole.DOCTOR,
+              createdAt: new Date()
+            },
+            profile: {
+              id: 3,
+              userId: 4,
+              specialization: "Pediatrics",
+              hospital: "Children's Wellness Center",
+              location: "789 Care Ave, Chicago, IL",
+              fee: 130,
+              experience: 10,
+              about: "Passionate about children's health with a gentle approach.",
+              status: DoctorStatus.APPROVED,
+              rating: 4.9,
+              reviewCount: 156,
+              profileImageUrl: null,
+              officeImageUrl: null
+            }
+          }
+        ];
+
+        for (const doctor of sampleDoctors) {
+          await User.create(doctor.user);
+          await DoctorProfile.create(doctor.profile);
+          
+          // Add availability slots for each doctor
+          const today = new Date();
+          for (let i = 0; i < 5; i++) {
+            const date = new Date(today);
+            date.setDate(today.getDate() + i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            // Add morning slots
+            for (let hour = 9; hour < 12; hour++) {
+              await AvailabilitySlot.create({
+                id: this.getNextSlotId(),
+                doctorId: doctor.profile.id,
+                date: dateStr,
+                startTime: `${hour}:00`,
+                endTime: `${hour}:30`,
+                duration: 30,
+                isBooked: false
+              });
+              
+              await AvailabilitySlot.create({
+                id: this.getNextSlotId(),
+                doctorId: doctor.profile.id,
+                date: dateStr,
+                startTime: `${hour}:30`,
+                endTime: `${hour+1}:00`,
+                duration: 30,
+                isBooked: false
+              });
+            }
+            
+            // Add afternoon slots
+            for (let hour = 14; hour < 17; hour++) {
+              await AvailabilitySlot.create({
+                id: this.getNextSlotId(),
+                doctorId: doctor.profile.id,
+                date: dateStr,
+                startTime: `${hour}:00`,
+                endTime: `${hour}:30`,
+                duration: 30,
+                isBooked: false
+              });
+              
+              await AvailabilitySlot.create({
+                id: this.getNextSlotId(),
+                doctorId: doctor.profile.id,
+                date: dateStr,
+                startTime: `${hour}:30`,
+                endTime: `${hour+1}:00`,
+                duration: 30,
+                isBooked: false
+              });
+            }
+          }
+        }
+        
+        console.log('[database] Sample doctors and availability slots seeded successfully');
+      }
+      
+    } catch (error) {
+      console.error('[database] Error seeding initial data:', error);
+    }
+  }
+  
+  // Helper method to generate slot IDs (used in seeding)
+  private slotIdCounter = 0;
+  private getNextSlotId(): number {
+    return ++this.slotIdCounter;
   }
 
   private async seedInitialData() {
