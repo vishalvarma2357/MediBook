@@ -25,8 +25,9 @@ export class MongoStorage implements IStorage {
       secret: process.env.SESSION_SECRET || 'medibook-session-secret'
     });
     
-    // Initialize with specializations and admin user
-    this.seedInitialData();
+    // Note: Seeding is disabled until MongoDB is properly set up
+    // You'll need to manually seed data after connecting to your MongoDB instance
+    console.log('[storage] MongoDB storage initialized, but seeding is disabled');
   }
 
   private async seedInitialData() {

@@ -52,5 +52,6 @@ export interface IStorage {
   getUsersByRole(role: UserRole): Promise<User[]>;
 }
 
-// Export MongoDB storage implementation
-export { storage } from './storage.mongo';
+// For now, let's use a memory implementation to get the application working
+import { MemStorage } from "./models/memory-storage";
+export const storage = new MemStorage();
