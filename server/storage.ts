@@ -52,5 +52,5 @@ export interface IStorage {
   getUsersByRole(role: UserRole): Promise<User[]>;
 }
 
-// Export in-memory storage implementation
-export { storage } from './storage.memory';
+// Export MongoDB storage implementation
+export { storage } from './storage.mongo';
