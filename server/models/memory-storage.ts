@@ -72,6 +72,129 @@ export class MemStorage implements IStorage {
         
         console.log('[database] Admin user seeded successfully');
       }
+      
+      // Check if we need to seed doctor data
+      const doctorExists = this.users.some(user => user.role === UserRole.DOCTOR);
+      
+      if (!doctorExists) {
+        // Create sample doctors
+        const doctors = [
+          {
+            user: {
+              username: "dr.smith",
+              password: "password123", // Will be hashed in auth.ts
+              email: "dr.smith@medibook.com",
+              firstName: "John",
+              lastName: "Smith",
+              role: UserRole.DOCTOR
+            },
+            profile: {
+              specialization: "Cardiology",
+              hospital: "Heart & Vascular Center",
+              location: "123 Medical Blvd, New York, NY",
+              fee: 150,
+              experience: 15,
+              about: "Specialized in cardiovascular health with 15 years of experience.",
+              status: DoctorStatus.APPROVED
+            }
+          },
+          {
+            user: {
+              username: "dr.johnson",
+              password: "password123", // Will be hashed in auth.ts
+              email: "dr.johnson@medibook.com",
+              firstName: "Sarah",
+              lastName: "Johnson",
+              role: UserRole.DOCTOR
+            },
+            profile: {
+              specialization: "Neurology",
+              hospital: "Neuro Science Institute",
+              location: "456 Health St, Boston, MA",
+              fee: 180,
+              experience: 12,
+              about: "Specializing in neurological disorders and treatments.",
+              status: DoctorStatus.APPROVED
+            }
+          },
+          {
+            user: {
+              username: "dr.patel",
+              password: "password123", // Will be hashed in auth.ts
+              email: "dr.patel@medibook.com",
+              firstName: "Raj",
+              lastName: "Patel",
+              role: UserRole.DOCTOR
+            },
+            profile: {
+              specialization: "Pediatrics",
+              hospital: "Children's Wellness Center",
+              location: "789 Care Ave, Chicago, IL",
+              fee: 130,
+              experience: 10,
+              about: "Passionate about children's health with a gentle approach.",
+              status: DoctorStatus.APPROVED
+            }
+          }
+        ];
+        
+        // Add doctors and their profiles
+        for (const doctor of doctors) {
+          const user = await this.createUser(doctor.user);
+          await this.createDoctorProfile({
+            userId: user.id,
+            ...doctor.profile
+          });
+          
+          // Generate availability slots for each doctor for the next 7 days
+          const today = new Date();
+          for (let i = 0; i < 7; i++) {
+            const date = new Date(today);
+            date.setDate(today.getDate() + i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            // Add morning slots (9 AM - 12 PM)
+            for (let hour = 9; hour < 12; hour++) {
+              await this.createAvailabilitySlot({
+                doctorId: user.id,
+                date: dateStr,
+                startTime: `${hour}:00`,
+                endTime: `${hour}:30`,
+                duration: 30
+              });
+              
+              await this.createAvailabilitySlot({
+                doctorId: user.id,
+                date: dateStr,
+                startTime: `${hour}:30`,
+                endTime: `${hour+1}:00`,
+                duration: 30
+              });
+            }
+            
+            // Add afternoon slots (2 PM - 5 PM)
+            for (let hour = 14; hour < 17; hour++) {
+              await this.createAvailabilitySlot({
+                doctorId: user.id,
+                date: dateStr,
+                startTime: `${hour}:00`,
+                endTime: `${hour}:30`,
+                duration: 30
+              });
+              
+              await this.createAvailabilitySlot({
+                doctorId: user.id,
+                date: dateStr,
+                startTime: `${hour}:30`,
+                endTime: `${hour+1}:00`,
+                duration: 30
+              });
+            }
+          }
+        }
+        
+        console.log('[database] Doctor data and availability slots seeded successfully');
+      }
     } catch (error) {
       console.error('[database] Error seeding initial data:', error);
     }

@@ -17,7 +17,16 @@ const getMongoUrl = () => {
 const connectToMongoDB = async () => {
   try {
     const mongoUrl = getMongoUrl();
-    await mongoose.connect(mongoUrl);
+    
+    // Set mongoose options with increased timeout
+    const mongooseOptions = {
+      serverSelectionTimeoutMS: 15000, // Timeout for server selection
+      connectTimeoutMS: 30000, // Timeout for initial connection
+      socketTimeoutMS: 45000, // Socket timeout
+    };
+    
+    console.log('[database] Connecting to MongoDB...');
+    await mongoose.connect(mongoUrl, mongooseOptions);
     console.log('[database] Connected to MongoDB successfully');
     return true;
   } catch (error) {

@@ -52,6 +52,29 @@ export interface IStorage {
   getUsersByRole(role: UserRole): Promise<User[]>;
 }
 
-// For now, let's use a memory implementation to get the application working
+// Import MemStorage class from memory-storage file
 import { MemStorage } from "./models/memory-storage";
-export const storage = new MemStorage();
+
+// We're going to use in-memory storage for this project
+// which will be seeded with sample data
+
+// Create a singleton storage instance
+let storageInstance: IStorage;
+
+// Initialize storage
+export async function initializeStorage(useMongoDB = false): Promise<void> {
+  console.log('[storage] Using in-memory storage with sample data');
+  storageInstance = new MemStorage();
+}
+
+// Get the storage instance
+export const storage: IStorage = new Proxy({} as IStorage, {
+  get: (target, prop) => {
+    if (!storageInstance) {
+      // Initialize with in-memory storage if not already initialized
+      console.log('[storage] Storage not initialized, using in-memory storage as fallback');
+      storageInstance = new MemStorage();
+    }
+    return storageInstance[prop as keyof IStorage];
+  }
+});

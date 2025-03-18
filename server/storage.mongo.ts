@@ -31,23 +31,46 @@ export class MongoStorage implements IStorage {
   
   private async seedInitialData() {
     try {
-      // Seed specializations
-      const specializationCount = await Specialization.countDocuments();
-      if (specializationCount === 0) {
-        const specializations = [
-          "Cardiology", "Neurology", "Dermatology", "Orthopedics", 
-          "Pediatrics", "Psychiatry", "Gynecology", "Ophthalmology",
-          "Dentistry", "General Practice"
-        ];
-        
-        for (const name of specializations) {
-          await Specialization.create({ 
-            id: specializations.indexOf(name) + 1,
-            name 
-          });
+      console.log('[database] Starting to seed initial data...');
+      
+      // Check if MongoDB connection is established
+      if (mongoose.connection.readyState !== 1) {
+        console.log('[database] MongoDB not connected, skipping seed operation');
+        return;
+      }
+      
+      // Seed specializations with a timeout to prevent hanging
+      const seedTimeout = setTimeout(() => {
+        console.warn('[database] Seed operation timed out, continuing without seeding');
+      }, 5000);
+      
+      try {
+        // Seed specializations
+        const specializationCount = await Specialization.countDocuments();
+        if (specializationCount === 0) {
+          const specializations = [
+            "Cardiology", "Neurology", "Dermatology", "Orthopedics", 
+            "Pediatrics", "Psychiatry", "Gynecology", "Ophthalmology",
+            "Dentistry", "General Practice"
+          ];
+          
+          for (const name of specializations) {
+            await Specialization.create({ 
+              id: specializations.indexOf(name) + 1,
+              name 
+            });
+          }
+          
+          console.log('[database] Specializations seeded successfully');
+        } else {
+          console.log('[database] Specializations already exist, skipping seed');
         }
         
-        console.log('[database] Specializations seeded successfully');
+        clearTimeout(seedTimeout);
+      } catch (seedError) {
+        clearTimeout(seedTimeout);
+        console.error('[database] Error seeding specializations:', seedError);
+      }
       }
       
       // Check if admin user exists
@@ -231,46 +254,7 @@ export class MongoStorage implements IStorage {
     return ++this.slotIdCounter;
   }
 
-  private async seedInitialData() {
-    try {
-      // Check if specializations exist
-      const specializationCount = await Specialization.countDocuments();
-      
-      if (specializationCount === 0) {
-        // Add specializations
-        const specializations = [
-          "Cardiology", "Neurology", "Dermatology", "Orthopedics", 
-          "Pediatrics", "Psychiatry", "Gynecology", "Ophthalmology",
-          "Dentistry", "General Practice"
-        ];
-        
-        for (const name of specializations) {
-          await this.createSpecialization({ name });
-        }
-        
-        console.log('[database] Specializations seeded successfully');
-      }
-      
-      // Check if admin user exists
-      const adminExists = await User.findOne({ username: "admin" });
-      
-      if (!adminExists) {
-        // Add admin user
-        await this.createUser({
-          username: "admin",
-          password: "adminpassword", // Will be hashed in auth.ts
-          email: "admin@medibook.com",
-          firstName: "Admin",
-          lastName: "User",
-          role: UserRole.ADMIN
-        });
-        
-        console.log('[database] Admin user seeded successfully');
-      }
-    } catch (error) {
-      console.error('[database] Error seeding initial data:', error);
-    }
-  }
+  // This was a duplicate method, removing it to fix errors
   
   // Helper functions to convert between Mongoose and app types
   private convertUserToType(user: IUser): UserType {

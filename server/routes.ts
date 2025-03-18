@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth } from "./auth";
@@ -17,7 +17,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { requireAuth, requireRole, requireApprovedDoctor } = setupAuth(app);
 
   // Error handling middleware
-  app.use((err, req, res, next) => {
+  app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     if (err instanceof ZodError) {
       const validationError = fromZodError(err);
       res.status(400).json({ message: validationError.message });
@@ -29,7 +29,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // API Routes
   
   // ----- SPECIALIZATIONS -----
-  app.get("/api/specializations", async (req, res) => {
+  app.get("/api/specializations", async (req: Request, res: Response) => {
     try {
       const specializations = await storage.getAllSpecializations();
       res.json(specializations);
@@ -39,7 +39,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ----- DOCTORS -----
-  app.get("/api/doctors", async (req, res) => {
+  app.get("/api/doctors", async (req: Request, res: Response) => {
     try {
       // Get approved doctors only for public view
       const doctors = await storage.getAllDoctors(DoctorStatus.APPROVED);
@@ -49,7 +49,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/doctors/specialization/:specialization", async (req, res) => {
+  app.get("/api/doctors/specialization/:specialization", async (req: Request, res: Response) => {
     try {
       const { specialization } = req.params;
       const doctors = await storage.getDoctorsBySpecialization(specialization);
