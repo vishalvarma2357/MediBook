@@ -5,11 +5,16 @@ import session from "express-session";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
-import { User } from "@shared/schema";
+import { User, UserRole, DoctorStatus } from "@shared/schema";
 
 declare global {
   namespace Express {
-    interface User extends User {}
+    interface User extends User {
+      doctorProfile?: {
+        id: number;
+        status: DoctorStatus;
+      }
+    }
   }
 }
 
@@ -30,13 +35,13 @@ async function comparePasswords(supplied: string, stored: string) {
 
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "medibook-healthcare-secret",
+    secret: process.env.SESSION_SECRET || "medibook-secret-key",
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-    },
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    }
   };
 
   app.set("trust proxy", 1);
@@ -45,115 +50,209 @@ export function setupAuth(app: Express) {
   app.use(passport.session());
 
   passport.use(
-    new LocalStrategy(
-      { usernameField: "email" },
-      async (email, password, done) => {
-        try {
-          const user = await storage.getUserByEmail(email);
-          if (!user || !(await comparePasswords(password, user.password))) {
-            return done(null, false);
-          }
-          
-          // For doctors, check if they are approved
-          if (user.role === "doctor" && !user.approved) {
-            return done(null, false);
-          }
-          
-          return done(null, user);
-        } catch (error) {
-          return done(error);
+    new LocalStrategy(async (username, password, done) => {
+      try {
+        const user = await storage.getUserByUsername(username);
+        if (!user || !(await comparePasswords(password, user.password))) {
+          return done(null, false);
         }
-      },
-    ),
+        
+        // For doctor users, check their status
+        if (user.role === UserRole.DOCTOR) {
+          const doctorProfile = await storage.getDoctorProfileByUserId(user.id);
+          if (doctorProfile && doctorProfile.status === DoctorStatus.REJECTED) {
+            return done(null, false);
+          }
+          
+          // Add doctor profile data to user object
+          return done(null, {
+            ...user,
+            doctorProfile: {
+              id: doctorProfile?.id,
+              status: doctorProfile?.status
+            }
+          });
+        }
+        
+        return done(null, user);
+      } catch (error) {
+        return done(error);
+      }
+    }),
   );
 
   passport.serializeUser((user, done) => done(null, user.id));
+  
   passport.deserializeUser(async (id: number, done) => {
     try {
       const user = await storage.getUser(id);
+      if (!user) {
+        return done(null, false);
+      }
+      
+      // For doctor users, add profile data
+      if (user.role === UserRole.DOCTOR) {
+        const doctorProfile = await storage.getDoctorProfileByUserId(user.id);
+        if (doctorProfile) {
+          return done(null, {
+            ...user,
+            doctorProfile: {
+              id: doctorProfile.id,
+              status: doctorProfile.status
+            }
+          });
+        }
+      }
+      
       done(null, user);
     } catch (error) {
       done(error);
     }
   });
 
-  app.post("/api/register", async (req, res, next) => {
+  // Register patient
+  app.post("/api/register/patient", async (req, res, next) => {
     try {
-      const { role, ...userData } = req.body;
+      const { confirmPassword, ...userData } = req.body;
       
-      // Check if user with this email already exists
-      const existingUser = await storage.getUserByEmail(userData.email);
+      // Check if user already exists
+      const existingUser = await storage.getUserByUsername(userData.username);
       if (existingUser) {
-        return res.status(400).json({ message: "Email already in use" });
+        return res.status(400).json({ message: "Username already exists" });
       }
       
-      // Hash the password before storing
-      const hashedPassword = await hashPassword(userData.password);
+      const existingEmail = await storage.getUserByEmail(userData.email);
+      if (existingEmail) {
+        return res.status(400).json({ message: "Email already exists" });
+      }
       
-      // Create the user
+      // Create user with hashed password
       const user = await storage.createUser({
         ...userData,
-        password: hashedPassword,
-        role: role || "patient",
-        // Doctors need approval, patients and admins are auto-approved
-        approved: role === "doctor" ? false : true,
+        role: UserRole.PATIENT,
+        password: await hashPassword(userData.password)
       });
       
-      // If it's a doctor, create doctor profile
-      if (role === "doctor" && req.body.specialty) {
-        await storage.createDoctor({
-          userId: user.id,
-          specialty: req.body.specialty,
-          bio: req.body.bio || "",
-          experience: req.body.experience || 0,
-          rating: 0,
-          numberOfReviews: 0,
-        });
-      }
-      
-      // Don't auto login doctors as they need approval
-      if (role === "doctor") {
-        return res.status(201).json({ 
-          message: "Registration successful. Your account is pending approval by an administrator." 
-        });
-      }
-      
-      // Log in the user
+      // Login user
       req.login(user, (err) => {
         if (err) return next(err);
-        const { password, ...userWithoutPassword } = user;
-        res.status(201).json(userWithoutPassword);
+        res.status(201).json({ ...user, password: undefined });
       });
     } catch (error) {
       next(error);
     }
   });
 
-  app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err, user, info) => {
-      if (err) return next(err);
-      if (!user) {
-        return res.status(401).json({ message: "Invalid email or password" });
+  // Register doctor
+  app.post("/api/register/doctor", async (req, res, next) => {
+    try {
+      const { user: userData, profile: profileData } = req.body;
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByUsername(userData.username);
+      if (existingUser) {
+        return res.status(400).json({ message: "Username already exists" });
       }
       
-      req.login(user, (err) => {
-        if (err) return next(err);
-        const { password, ...userWithoutPassword } = user;
-        res.status(200).json(userWithoutPassword);
+      const existingEmail = await storage.getUserByEmail(userData.email);
+      if (existingEmail) {
+        return res.status(400).json({ message: "Email already exists" });
+      }
+      
+      // Create user with hashed password
+      const user = await storage.createUser({
+        ...userData,
+        role: UserRole.DOCTOR,
+        password: await hashPassword(userData.password)
       });
-    })(req, res, next);
+      
+      // Create doctor profile
+      const doctorProfile = await storage.createDoctorProfile({
+        ...profileData,
+        userId: user.id,
+        status: DoctorStatus.PENDING
+      });
+      
+      // Login user
+      req.login({
+        ...user,
+        doctorProfile: {
+          id: doctorProfile.id,
+          status: doctorProfile.status
+        }
+      }, (err) => {
+        if (err) return next(err);
+        res.status(201).json({ 
+          user: { ...user, password: undefined },
+          profile: doctorProfile
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
+  // Login route
+  app.post("/api/login", passport.authenticate("local"), (req, res) => {
+    const user = { ...req.user };
+    // Remove password from response
+    delete user.password;
+    res.status(200).json(user);
+  });
+
+  // Logout route
   app.post("/api/logout", (req, res, next) => {
     req.logout((err) => {
       if (err) return next(err);
-      res.sendStatus(200);
+      req.session.destroy((err) => {
+        if (err) return next(err);
+        res.clearCookie('connect.sid');
+        res.sendStatus(200);
+      });
     });
   });
 
+  // Current user route
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const { password, ...userWithoutPassword } = req.user as User;
-    res.json(userWithoutPassword);
+    const user = { ...req.user };
+    // Remove password from response
+    delete user.password;
+    res.json(user);
   });
+
+  // Auth middleware for routes
+  function requireAuth(req, res, next) {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    next();
+  }
+
+  function requireRole(role: UserRole) {
+    return (req, res, next) => {
+      if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+      if (req.user.role !== role && req.user.role !== UserRole.ADMIN) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      next();
+    };
+  }
+
+  function requireApprovedDoctor(req, res, next) {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    if (req.user.role !== UserRole.DOCTOR) {
+      return res.status(403).json({ message: "Doctor access required" });
+    }
+    if (req.user.doctorProfile?.status !== DoctorStatus.APPROVED) {
+      return res.status(403).json({ message: "Your doctor account is not approved yet" });
+    }
+    next();
+  }
+
+  return { requireAuth, requireRole, requireApprovedDoctor };
 }

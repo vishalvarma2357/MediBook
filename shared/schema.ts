@@ -1,108 +1,159 @@
-import { pgTable, text, serial, integer, boolean, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const userRoleEnum = pgEnum('user_role', ['patient', 'doctor', 'admin']);
-export const appointmentStatusEnum = pgEnum('appointment_status', ['pending', 'confirmed', 'cancelled', 'completed']);
+// User roles
+export enum UserRole {
+  PATIENT = 'patient',
+  DOCTOR = 'doctor',
+  ADMIN = 'admin'
+}
 
+// Appointment status
+export enum AppointmentStatus {
+  PENDING = 'pending',
+  CONFIRMED = 'confirmed',
+  CANCELLED = 'cancelled',
+  COMPLETED = 'completed',
+  CHECKED_IN = 'checked_in'
+}
+
+// Doctor approval status
+export enum DoctorStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected'
+}
+
+// Users table - base for all user types
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
+  username: text("username").notNull().unique(),
   password: text("password").notNull(),
-  role: userRoleEnum("role").notNull().default('patient'),
-  imageUrl: text("image_url"),
-  phone: text("phone"),
-  address: text("address"),
-  approved: boolean("approved").default(true),
-});
-
-export const doctors = pgTable("doctors", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  specialty: text("specialty").notNull(),
-  bio: text("bio"),
-  experience: integer("experience").default(0),
-  rating: integer("rating").default(0),
-  numberOfReviews: integer("number_of_reviews").default(0),
-});
-
-export const timeSlots = pgTable("time_slots", {
-  id: serial("id").primaryKey(),
-  doctorId: integer("doctor_id").notNull().references(() => doctors.id),
-  date: text("date").notNull(),
-  startTime: text("start_time").notNull(),
-  endTime: text("end_time").notNull(),
-  isBooked: boolean("is_booked").default(false),
-});
-
-export const appointments = pgTable("appointments", {
-  id: serial("id").primaryKey(),
-  patientId: integer("patient_id").notNull().references(() => users.id),
-  doctorId: integer("doctor_id").notNull().references(() => doctors.id),
-  timeSlotId: integer("time_slot_id").notNull().references(() => timeSlots.id),
-  status: appointmentStatusEnum("status").notNull().default('pending'),
-  notes: text("notes"),
+  email: text("email").notNull().unique(),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  role: text("role", { enum: Object.values(UserRole) }).notNull().default(UserRole.PATIENT),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const specialties = pgTable("specialties", {
+// Doctor profiles - extends users for doctors
+export const doctorProfiles = pgTable("doctor_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  specialization: text("specialization").notNull(),
+  hospital: text("hospital").notNull(),
+  location: text("location").notNull(),
+  fee: integer("fee").notNull(),
+  experience: integer("experience").notNull(),
+  about: text("about"),
+  status: text("status", { enum: Object.values(DoctorStatus) }).notNull().default(DoctorStatus.PENDING),
+  rating: integer("rating"),
+  reviewCount: integer("review_count").default(0),
+  profileImageUrl: text("profile_image_url"),
+  officeImageUrl: text("office_image_url"),
+});
+
+// Availability slots for doctors
+export const availabilitySlots = pgTable("availability_slots", {
+  id: serial("id").primaryKey(),
+  doctorId: integer("doctor_id").notNull().references(() => doctorProfiles.id),
+  date: text("date").notNull(), // Format: YYYY-MM-DD
+  startTime: text("start_time").notNull(), // Format: HH:MM (24h)
+  endTime: text("end_time").notNull(), // Format: HH:MM (24h)
+  duration: integer("duration").notNull(), // in minutes
+  isBooked: boolean("is_booked").default(false),
+});
+
+// Appointments
+export const appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => users.id),
+  doctorId: integer("doctor_id").notNull().references(() => doctorProfiles.id),
+  slotId: integer("slot_id").notNull().references(() => availabilitySlots.id),
+  date: text("date").notNull(), // Format: YYYY-MM-DD
+  startTime: text("start_time").notNull(), // Format: HH:MM (24h)
+  endTime: text("end_time").notNull(), // Format: HH:MM (24h)
+  status: text("status", { enum: Object.values(AppointmentStatus) }).notNull().default(AppointmentStatus.PENDING),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Specializations reference table
+export const specializations = pgTable("specializations", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
 });
 
-// Insert Schemas
-export const insertUserSchema = createInsertSchema(users).omit({ id: true });
-export const insertDoctorSchema = createInsertSchema(doctors).omit({ id: true });
-export const insertTimeSlotSchema = createInsertSchema(timeSlots).omit({ id: true });
-export const insertAppointmentSchema = createInsertSchema(appointments).omit({ id: true, createdAt: true });
-export const insertSpecialtySchema = createInsertSchema(specialties).omit({ id: true });
+// Insert schemas
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true
+});
 
-// Registration schemas with validation
-export const patientRegisterSchema = insertUserSchema.extend({
-  confirmPassword: z.string(),
+export const insertDoctorProfileSchema = createInsertSchema(doctorProfiles).omit({
+  id: true,
+  rating: true,
+  reviewCount: true
+});
+
+export const insertAvailabilitySlotSchema = createInsertSchema(availabilitySlots).omit({
+  id: true,
+  isBooked: true
+});
+
+export const insertAppointmentSchema = createInsertSchema(appointments).omit({
+  id: true,
+  createdAt: true
+});
+
+export const insertSpecializationSchema = createInsertSchema(specializations).omit({
+  id: true
+});
+
+// Extension schemas for registration
+export const patientRegistrationSchema = insertUserSchema.extend({
+  confirmPassword: z.string()
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
 });
 
-export const doctorRegisterSchema = z.object({
+export const doctorRegistrationSchema = z.object({
   user: insertUserSchema,
-  doctor: insertDoctorSchema.omit({ userId: true }),
-  confirmPassword: z.string(),
-}).refine((data) => data.user.password === data.confirmPassword, {
+  profile: insertDoctorProfileSchema.omit({ userId: true, status: true })
+}).refine((data) => data.user.password === data.user.confirmPassword, {
   message: "Passwords don't match",
-  path: ["confirmPassword"],
+  path: ["user", "confirmPassword"],
 });
 
 // Login schema
 export const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+  username: z.string().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
 });
 
 // Types
-export type User = typeof users.$inferSelect;
-export type Doctor = typeof doctors.$inferSelect;
-export type TimeSlot = typeof timeSlots.$inferSelect;
-export type Appointment = typeof appointments.$inferSelect;
-export type Specialty = typeof specialties.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type InsertDoctor = z.infer<typeof insertDoctorSchema>;
-export type InsertTimeSlot = z.infer<typeof insertTimeSlotSchema>;
+export type InsertDoctorProfile = z.infer<typeof insertDoctorProfileSchema>;
+export type InsertAvailabilitySlot = z.infer<typeof insertAvailabilitySlotSchema>;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
-export type InsertSpecialty = z.infer<typeof insertSpecialtySchema>;
-export type PatientRegister = z.infer<typeof patientRegisterSchema>;
-export type DoctorRegister = z.infer<typeof doctorRegisterSchema>;
+export type InsertSpecialization = z.infer<typeof insertSpecializationSchema>;
+
+export type PatientRegistration = z.infer<typeof patientRegistrationSchema>;
+export type DoctorRegistration = z.infer<typeof doctorRegistrationSchema>;
 export type Login = z.infer<typeof loginSchema>;
 
-// Extended types with joined data
-export type DoctorWithUser = Doctor & {
-  user: User;
-};
+export type User = typeof users.$inferSelect;
+export type DoctorProfile = typeof doctorProfiles.$inferSelect;
+export type AvailabilitySlot = typeof availabilitySlots.$inferSelect;
+export type Appointment = typeof appointments.$inferSelect;
+export type Specialization = typeof specializations.$inferSelect;
 
-export type AppointmentWithDetails = Appointment & {
-  doctor: DoctorWithUser;
-  timeSlot: TimeSlot;
-  patient: User;
+// Combined types for frontend
+export type Doctor = User & { profile: DoctorProfile };
+export type DoctorWithAvailability = Doctor & { availabilitySlots: AvailabilitySlot[] };
+export type AppointmentDetails = Appointment & { 
+  doctor: Doctor,
+  patient: User
 };

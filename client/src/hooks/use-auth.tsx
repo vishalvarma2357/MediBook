@@ -4,29 +4,48 @@ import {
   useMutation,
   UseMutationResult,
 } from "@tanstack/react-query";
-import { User, PatientRegister, Login, DoctorRegister } from "@shared/schema";
+import { 
+  User, 
+  Login, 
+  PatientRegistration, 
+  DoctorRegistration,
+  UserRole,
+  DoctorStatus
+} from "@shared/schema";
 import { getQueryFn, apiRequest, queryClient } from "../lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+type AuthUser = User & {
+  doctorProfile?: {
+    id: number;
+    status: DoctorStatus;
+  }
+};
+
 type AuthContextType = {
-  user: User | null;
+  user: AuthUser | null;
   isLoading: boolean;
   error: Error | null;
-  loginMutation: UseMutationResult<Omit<User, "password">, Error, Login>;
+  loginMutation: UseMutationResult<AuthUser, Error, Login>;
   logoutMutation: UseMutationResult<void, Error, void>;
-  patientRegisterMutation: UseMutationResult<Omit<User, "password">, Error, PatientRegister>;
-  doctorRegisterMutation: UseMutationResult<{ message: string }, Error, DoctorRegister>;
+  patientRegisterMutation: UseMutationResult<AuthUser, Error, PatientRegistration>;
+  doctorRegisterMutation: UseMutationResult<
+    { user: AuthUser; profile: any }, 
+    Error, 
+    DoctorRegistration
+  >;
 };
 
 export const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
+  
   const {
     data: user,
     error,
     isLoading,
-  } = useQuery<User | undefined, Error>({
+  } = useQuery<AuthUser | null, Error>({
     queryKey: ["/api/user"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
@@ -36,36 +55,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/login", credentials);
       return await res.json();
     },
-    onSuccess: (user: User) => {
+    onSuccess: (user: AuthUser) => {
       queryClient.setQueryData(["/api/user"], user);
-      toast({
-        title: "Login successful",
-        description: `Welcome back, ${user.name}!`,
-      });
+      
+      // Redirect based on role
+      let redirectPath = "/";
+      if (user.role === UserRole.DOCTOR) {
+        redirectPath = "/doctor";
+      } else if (user.role === UserRole.ADMIN) {
+        redirectPath = "/admin";
+      }
+      
+      window.location.href = redirectPath;
     },
     onError: (error: Error) => {
       toast({
         title: "Login failed",
-        description: error.message,
+        description: error.message || "Invalid username or password",
         variant: "destructive",
       });
     },
   });
 
   const patientRegisterMutation = useMutation({
-    mutationFn: async (data: PatientRegister) => {
-      const res = await apiRequest("POST", "/api/register", {
-        ...data,
-        role: "patient"
-      });
+    mutationFn: async (data: PatientRegistration) => {
+      const res = await apiRequest("POST", "/api/register/patient", data);
       return await res.json();
     },
-    onSuccess: (user: User) => {
+    onSuccess: (user: AuthUser) => {
       queryClient.setQueryData(["/api/user"], user);
-      toast({
-        title: "Registration successful",
-        description: `Welcome to MediBook, ${user.name}!`,
-      });
+      window.location.href = "/";
     },
     onError: (error: Error) => {
       toast({
@@ -77,21 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const doctorRegisterMutation = useMutation({
-    mutationFn: async (data: DoctorRegister) => {
-      const res = await apiRequest("POST", "/api/register", {
-        ...data.user,
-        role: "doctor",
-        specialty: data.doctor.specialty,
-        bio: data.doctor.bio,
-        experience: data.doctor.experience,
-      });
+    mutationFn: async (data: DoctorRegistration) => {
+      const res = await apiRequest("POST", "/api/register/doctor", data);
       return await res.json();
     },
-    onSuccess: (response: { message: string }) => {
-      toast({
-        title: "Registration successful",
-        description: response.message,
-      });
+    onSuccess: (data: { user: AuthUser; profile: any }) => {
+      queryClient.setQueryData(["/api/user"], data.user);
+      window.location.href = "/doctor";
     },
     onError: (error: Error) => {
       toast({
@@ -108,10 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: () => {
       queryClient.setQueryData(["/api/user"], null);
-      toast({
-        title: "Logged out",
-        description: "You have been logged out successfully.",
-      });
+      window.location.href = "/auth";
     },
     onError: (error: Error) => {
       toast({

@@ -3,26 +3,64 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
-import { AuthProvider } from "@/hooks/use-auth";
-import { ProtectedRoute } from "@/lib/protected-route";
+import PatientDashboard from "@/pages/patient-dashboard";
+import DoctorDashboard from "@/pages/doctor-dashboard";
+import AdminDashboard from "@/pages/admin-dashboard";
 import AuthPage from "@/pages/auth-page";
-import DashboardPage from "@/pages/dashboard-page";
-import DoctorsPage from "@/pages/doctors-page";
-import AppointmentsPage from "@/pages/appointments-page";
-import DoctorProfilePage from "@/pages/doctor-profile-page";
-import ProfilePage from "@/pages/profile-page";
-import AdminPage from "@/pages/admin-page";
+import BookingPage from "@/pages/booking-page";
+import FindDoctors from "@/pages/find-doctors";
+import MyAppointments from "@/pages/my-appointments";
+import { ProtectedRoute } from "./lib/protected-route";
+import { useAuth } from "./hooks/use-auth";
+import { UserRole } from "@shared/schema";
 
 function Router() {
+  const { user } = useAuth();
+
   return (
     <Switch>
-      <ProtectedRoute path="/" component={DashboardPage} />
-      <ProtectedRoute path="/doctors" component={DoctorsPage} />
-      <ProtectedRoute path="/doctors/:id" component={DoctorProfilePage} />
-      <ProtectedRoute path="/appointments" component={AppointmentsPage} />
-      <ProtectedRoute path="/profile" component={ProfilePage} />
-      <ProtectedRoute path="/admin" component={AdminPage} />
+      {/* Public routes */}
       <Route path="/auth" component={AuthPage} />
+
+      {/* Role-specific dashboard routes */}
+      <ProtectedRoute 
+        path="/" 
+        requiredRole={UserRole.PATIENT}
+        component={PatientDashboard}
+      />
+      
+      <ProtectedRoute 
+        path="/doctor"
+        requiredRole={UserRole.DOCTOR}
+        component={DoctorDashboard}
+      />
+      
+      <ProtectedRoute 
+        path="/admin"
+        requiredRole={UserRole.ADMIN}
+        component={AdminDashboard}
+      />
+
+      {/* Patient routes */}
+      <ProtectedRoute 
+        path="/find-doctors"
+        requiredRole={UserRole.PATIENT}
+        component={FindDoctors}
+      />
+      
+      <ProtectedRoute 
+        path="/my-appointments"
+        requiredRole={UserRole.PATIENT}
+        component={MyAppointments}
+      />
+      
+      <ProtectedRoute 
+        path="/booking/:doctorId"
+        requiredRole={UserRole.PATIENT}
+        component={BookingPage}
+      />
+
+      {/* Fallback to 404 */}
       <Route component={NotFound} />
     </Switch>
   );
@@ -31,10 +69,8 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <Router />
-        <Toaster />
-      </AuthProvider>
+      <Router />
+      <Toaster />
     </QueryClientProvider>
   );
 }

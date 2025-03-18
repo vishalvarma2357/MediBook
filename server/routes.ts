@@ -1,254 +1,335 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth } from "./auth";
-import { z } from "zod";
-import { insertAppointmentSchema, insertTimeSlotSchema } from "@shared/schema";
-
-// Middleware to check authentication
-const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  res.status(401).json({ message: "Unauthorized" });
-};
-
-// Middleware to check if user is a doctor
-const isDoctor = (req: Request, res: Response, next: NextFunction) => {
-  if (req.isAuthenticated() && req.user && req.user.role === "doctor") {
-    return next();
-  }
-  res.status(403).json({ message: "Forbidden: Only doctors can access this resource" });
-};
-
-// Middleware to check if user is a patient
-const isPatient = (req: Request, res: Response, next: NextFunction) => {
-  if (req.isAuthenticated() && req.user && req.user.role === "patient") {
-    return next();
-  }
-  res.status(403).json({ message: "Forbidden: Only patients can access this resource" });
-};
-
-// Middleware to check if user is an admin
-const isAdmin = (req: Request, res: Response, next: NextFunction) => {
-  if (req.isAuthenticated() && req.user && req.user.role === "admin") {
-    return next();
-  }
-  res.status(403).json({ message: "Forbidden: Only admins can access this resource" });
-};
+import { 
+  UserRole, 
+  DoctorStatus, 
+  AppointmentStatus,
+  insertAppointmentSchema,
+  insertAvailabilitySlotSchema
+} from "@shared/schema";
+import { ZodError } from "zod";
+import { fromZodError } from "zod-validation-error";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Set up authentication routes
-  setupAuth(app);
+  // Setup authentication
+  const { requireAuth, requireRole, requireApprovedDoctor } = setupAuth(app);
 
-  // Specialties routes
-  app.get("/api/specialties", async (req, res) => {
-    try {
-      const specialties = await storage.getAllSpecialties();
-      res.json(specialties);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch specialties" });
+  // Error handling middleware
+  app.use((err, req, res, next) => {
+    if (err instanceof ZodError) {
+      const validationError = fromZodError(err);
+      res.status(400).json({ message: validationError.message });
+    } else {
+      next(err);
     }
   });
 
-  // Doctor routes
+  // API Routes
+  
+  // ----- SPECIALIZATIONS -----
+  app.get("/api/specializations", async (req, res) => {
+    try {
+      const specializations = await storage.getAllSpecializations();
+      res.json(specializations);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching specializations" });
+    }
+  });
+
+  // ----- DOCTORS -----
   app.get("/api/doctors", async (req, res) => {
     try {
-      const specialty = req.query.specialty as string | undefined;
-      
-      let doctors;
-      if (specialty) {
-        doctors = await storage.getDoctorsBySpecialty(specialty);
-      } else {
-        doctors = await storage.getAllDoctors();
-      }
-      
+      // Get approved doctors only for public view
+      const doctors = await storage.getAllDoctors(DoctorStatus.APPROVED);
       res.json(doctors);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch doctors" });
+      res.status(500).json({ message: "Error fetching doctors" });
+    }
+  });
+
+  app.get("/api/doctors/specialization/:specialization", async (req, res) => {
+    try {
+      const { specialization } = req.params;
+      const doctors = await storage.getDoctorsBySpecialization(specialization);
+      res.json(doctors);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching doctors by specialization" });
     }
   });
 
   app.get("/api/doctors/:id", async (req, res) => {
     try {
-      const doctorId = parseInt(req.params.id);
-      const doctor = await storage.getDoctorById(doctorId);
+      const { id } = req.params;
+      const doctorProfile = await storage.getDoctorProfile(parseInt(id));
       
-      if (!doctor) {
+      if (!doctorProfile) {
         return res.status(404).json({ message: "Doctor not found" });
       }
       
-      res.json(doctor);
+      // Only show approved doctors unless admin or the doctor themselves
+      if (doctorProfile.status !== DoctorStatus.APPROVED && 
+          (!req.isAuthenticated() || 
+           (req.user.role !== UserRole.ADMIN && 
+            req.user.role !== UserRole.DOCTOR && 
+            req.user.id !== doctorProfile.userId))) {
+        return res.status(404).json({ message: "Doctor not found" });
+      }
+      
+      const doctor = await storage.getUser(doctorProfile.userId);
+      res.json({ ...doctor, profile: doctorProfile, password: undefined });
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch doctor" });
+      res.status(500).json({ message: "Error fetching doctor" });
     }
   });
 
-  // Time slot routes
-  app.post("/api/timeslots", isDoctor, async (req, res) => {
+  // ----- AVAILABILITY -----
+  app.get("/api/doctors/:id/availability", async (req, res) => {
     try {
-      const parsedData = insertTimeSlotSchema.safeParse(req.body);
+      const { id } = req.params;
+      const { date } = req.query;
       
-      if (!parsedData.success) {
-        return res.status(400).json({ message: "Invalid time slot data" });
-      }
+      // Only get slots that are available
+      const availableSlots = await storage.getAvailableSlotsForDoctor(
+        parseInt(id), 
+        date as string | undefined
+      );
       
-      // Verify that the doctor is creating slots for themselves
-      const doctor = await storage.getDoctorByUserId(req.user!.id);
-      if (!doctor || doctor.id !== parsedData.data.doctorId) {
-        return res.status(403).json({ message: "You can only create time slots for yourself" });
-      }
-      
-      const timeSlot = await storage.createTimeSlot(parsedData.data);
-      res.status(201).json(timeSlot);
+      res.json(availableSlots);
     } catch (error) {
-      res.status(500).json({ message: "Failed to create time slot" });
+      res.status(500).json({ message: "Error fetching availability" });
     }
   });
 
-  app.get("/api/doctors/:id/timeslots", async (req, res) => {
+  app.post("/api/availability", requireApprovedDoctor, async (req, res) => {
     try {
-      const doctorId = parseInt(req.params.id);
-      const available = req.query.available === "true";
+      // Get the doctor's profile
+      const doctorProfile = await storage.getDoctorProfileByUserId(req.user.id);
+      if (!doctorProfile) {
+        return res.status(404).json({ message: "Doctor profile not found" });
+      }
       
-      let timeSlots;
-      if (available) {
-        timeSlots = await storage.getAvailableTimeSlotsByDoctorId(doctorId);
+      // Validate the slot data
+      const validateSlot = insertAvailabilitySlotSchema.parse({
+        ...req.body,
+        doctorId: doctorProfile.id
+      });
+      
+      // Create the slot
+      const slot = await storage.createAvailabilitySlot(validateSlot);
+      res.status(201).json(slot);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        const validationError = fromZodError(error);
+        res.status(400).json({ message: validationError.message });
       } else {
-        timeSlots = await storage.getTimeSlotsByDoctorId(doctorId);
+        res.status(500).json({ message: "Error creating availability slot" });
       }
-      
-      res.json(timeSlots);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch time slots" });
     }
   });
 
-  // Appointment routes
-  app.post("/api/appointments", isPatient, async (req, res) => {
+  app.delete("/api/availability/:id", requireApprovedDoctor, async (req, res) => {
     try {
-      const parsedData = insertAppointmentSchema.safeParse(req.body);
+      const { id } = req.params;
+      const slot = await storage.getAvailabilitySlot(parseInt(id));
       
-      if (!parsedData.success) {
-        return res.status(400).json({ message: "Invalid appointment data" });
+      if (!slot) {
+        return res.status(404).json({ message: "Availability slot not found" });
       }
       
-      // Verify that the patient is creating an appointment for themselves
-      if (req.user!.id !== parsedData.data.patientId) {
-        return res.status(403).json({ message: "You can only create appointments for yourself" });
+      // Ensure the slot belongs to the doctor
+      const doctorProfile = await storage.getDoctorProfileByUserId(req.user.id);
+      if (doctorProfile?.id !== slot.doctorId) {
+        return res.status(403).json({ message: "Access denied" });
       }
       
-      // Check if the time slot exists and is available
-      const timeSlot = await storage.getTimeSlotById(parsedData.data.timeSlotId);
-      if (!timeSlot) {
-        return res.status(404).json({ message: "Time slot not found" });
+      // Can't delete booked slots
+      if (slot.isBooked) {
+        return res.status(400).json({ message: "Cannot delete a booked slot" });
       }
       
-      if (timeSlot.isBooked) {
-        return res.status(400).json({ message: "This time slot is already booked" });
+      // Mark as booked to effectively delete it
+      await storage.updateAvailabilitySlot(parseInt(id), { isBooked: true });
+      
+      res.status(200).json({ message: "Slot deleted" });
+    } catch (error) {
+      res.status(500).json({ message: "Error deleting availability slot" });
+    }
+  });
+
+  // ----- APPOINTMENTS -----
+  app.post("/api/appointments", requireAuth, async (req, res) => {
+    try {
+      // Patients can only book for themselves
+      if (req.user.role === UserRole.PATIENT) {
+        req.body.patientId = req.user.id;
       }
       
-      const appointment = await storage.createAppointment(parsedData.data);
+      // Validate the appointment data
+      const validatedAppointment = insertAppointmentSchema.parse(req.body);
+      
+      // Check if the slot exists and is available
+      const slot = await storage.getAvailabilitySlot(validatedAppointment.slotId);
+      if (!slot) {
+        return res.status(404).json({ message: "Slot not found" });
+      }
+      
+      if (slot.isBooked) {
+        return res.status(400).json({ message: "Slot is already booked" });
+      }
+      
+      // Create the appointment
+      const appointment = await storage.createAppointment(validatedAppointment);
       res.status(201).json(appointment);
     } catch (error) {
-      res.status(500).json({ message: "Failed to create appointment" });
+      if (error instanceof ZodError) {
+        const validationError = fromZodError(error);
+        res.status(400).json({ message: validationError.message });
+      } else {
+        res.status(500).json({ message: "Error creating appointment" });
+      }
     }
   });
 
-  app.get("/api/appointments", isAuthenticated, async (req, res) => {
+  app.get("/api/appointments/patient", requireAuth, async (req, res) => {
     try {
-      let appointments;
-      
-      if (req.user!.role === "patient") {
-        appointments = await storage.getAppointmentsByPatientId(req.user!.id);
-      } else if (req.user!.role === "doctor") {
-        const doctor = await storage.getDoctorByUserId(req.user!.id);
-        if (!doctor) {
-          return res.status(404).json({ message: "Doctor profile not found" });
-        }
-        appointments = await storage.getAppointmentsByDoctorId(doctor.id);
-      } else if (req.user!.role === "admin") {
-        // Admin can see all appointments, but we don't have that method yet
-        // For now, we'll just return an empty array
-        appointments = [];
-      } else {
-        return res.status(403).json({ message: "Forbidden" });
+      const appointments = await storage.getPatientAppointments(req.user.id);
+      res.json(appointments);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching appointments" });
+    }
+  });
+
+  app.get("/api/appointments/doctor", requireApprovedDoctor, async (req, res) => {
+    try {
+      const doctorProfile = await storage.getDoctorProfileByUserId(req.user.id);
+      if (!doctorProfile) {
+        return res.status(404).json({ message: "Doctor profile not found" });
       }
+      
+      const { status } = req.query;
+      const appointments = await storage.getDoctorAppointments(
+        doctorProfile.id,
+        status as AppointmentStatus | undefined
+      );
       
       res.json(appointments);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch appointments" });
+      res.status(500).json({ message: "Error fetching appointments" });
     }
   });
 
-  app.patch("/api/appointments/:id", isAuthenticated, async (req, res) => {
+  app.put("/api/appointments/:id/status", requireAuth, async (req, res) => {
     try {
-      const appointmentId = parseInt(req.params.id);
-      const appointment = await storage.getAppointmentById(appointmentId);
+      const { id } = req.params;
+      const { status } = req.body;
       
+      const appointment = await storage.getAppointment(parseInt(id));
       if (!appointment) {
         return res.status(404).json({ message: "Appointment not found" });
       }
       
       // Check permissions
-      if (
-        req.user!.role === "patient" && appointment.patientId !== req.user!.id ||
-        req.user!.role === "doctor" && appointment.doctor.id !== (await storage.getDoctorByUserId(req.user!.id))?.id
-      ) {
-        return res.status(403).json({ message: "You don't have permission to update this appointment" });
+      if (req.user.role === UserRole.PATIENT) {
+        // Patients can only cancel their own appointments
+        if (appointment.patientId !== req.user.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+        
+        if (status !== AppointmentStatus.CANCELLED) {
+          return res.status(403).json({ message: "Patients can only cancel appointments" });
+        }
+      } else if (req.user.role === UserRole.DOCTOR) {
+        // Doctors can update status of their own appointments
+        const doctorProfile = await storage.getDoctorProfileByUserId(req.user.id);
+        if (appointment.doctorId !== doctorProfile?.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
       }
       
-      // Patients can only cancel appointments
-      if (req.user!.role === "patient" && req.body.status && req.body.status !== "cancelled") {
-        return res.status(403).json({ message: "Patients can only cancel appointments" });
-      }
-      
-      const updatedAppointment = await storage.updateAppointment(appointmentId, req.body);
+      // Update the appointment
+      const updatedAppointment = await storage.updateAppointment(parseInt(id), { status });
       res.json(updatedAppointment);
     } catch (error) {
-      res.status(500).json({ message: "Failed to update appointment" });
+      res.status(500).json({ message: "Error updating appointment status" });
     }
   });
 
-  // Admin routes
-  app.get("/api/admin/users", isAdmin, async (req, res) => {
+  // ----- ADMIN ROUTES -----
+  app.get("/api/admin/doctors/pending", requireRole(UserRole.ADMIN), async (req, res) => {
     try {
-      const users = await storage.getAllUsers();
-      res.json(users);
+      const pendingDoctors = await storage.getAllDoctors(DoctorStatus.PENDING);
+      res.json(pendingDoctors);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch users" });
+      res.status(500).json({ message: "Error fetching pending doctors" });
     }
   });
 
-  app.patch("/api/admin/doctors/:id/approve", isAdmin, async (req, res) => {
+  app.put("/api/admin/doctors/:id/approve", requireRole(UserRole.ADMIN), async (req, res) => {
     try {
-      const doctorId = parseInt(req.params.id);
-      const doctor = await storage.getDoctorById(doctorId);
+      const { id } = req.params;
+      const doctorProfile = await storage.getDoctorProfile(parseInt(id));
       
-      if (!doctor) {
-        return res.status(404).json({ message: "Doctor not found" });
+      if (!doctorProfile) {
+        return res.status(404).json({ message: "Doctor profile not found" });
       }
       
-      const updatedUser = await storage.updateUser(doctor.user.id, { approved: true });
-      res.json(updatedUser);
+      const updatedProfile = await storage.updateDoctorProfile(parseInt(id), {
+        status: DoctorStatus.APPROVED
+      });
+      
+      res.json(updatedProfile);
     } catch (error) {
-      res.status(500).json({ message: "Failed to approve doctor" });
+      res.status(500).json({ message: "Error approving doctor" });
     }
   });
 
-  app.patch("/api/admin/doctors/:id/reject", isAdmin, async (req, res) => {
+  app.put("/api/admin/doctors/:id/reject", requireRole(UserRole.ADMIN), async (req, res) => {
     try {
-      const doctorId = parseInt(req.params.id);
-      const doctor = await storage.getDoctorById(doctorId);
+      const { id } = req.params;
+      const doctorProfile = await storage.getDoctorProfile(parseInt(id));
       
-      if (!doctor) {
-        return res.status(404).json({ message: "Doctor not found" });
+      if (!doctorProfile) {
+        return res.status(404).json({ message: "Doctor profile not found" });
       }
       
-      const updatedUser = await storage.updateUser(doctor.user.id, { approved: false });
-      res.json(updatedUser);
+      const updatedProfile = await storage.updateDoctorProfile(parseInt(id), {
+        status: DoctorStatus.REJECTED
+      });
+      
+      res.json(updatedProfile);
     } catch (error) {
-      res.status(500).json({ message: "Failed to reject doctor" });
+      res.status(500).json({ message: "Error rejecting doctor" });
+    }
+  });
+
+  app.get("/api/admin/users", requireRole(UserRole.ADMIN), async (req, res) => {
+    try {
+      const { role } = req.query;
+      let users;
+      
+      if (role) {
+        users = await storage.getUsersByRole(role as UserRole);
+      } else {
+        users = await storage.getAllUsers();
+      }
+      
+      // Remove passwords
+      const safeUsers = users.map(user => ({ ...user, password: undefined }));
+      
+      res.json(safeUsers);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching users" });
+    }
+  });
+
+  app.get("/api/admin/appointments", requireRole(UserRole.ADMIN), async (req, res) => {
+    try {
+      const appointments = await storage.getAllAppointments();
+      res.json(appointments);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching appointments" });
     }
   });
 

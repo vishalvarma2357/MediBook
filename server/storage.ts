@@ -1,118 +1,141 @@
-import { users, doctors, timeSlots, appointments, specialties, User, Doctor, TimeSlot, Appointment, Specialty, InsertUser, InsertDoctor, InsertTimeSlot, InsertAppointment, InsertSpecialty, DoctorWithUser, AppointmentWithDetails } from "@shared/schema";
+import { 
+  User, InsertUser, 
+  DoctorProfile, InsertDoctorProfile, 
+  Appointment, InsertAppointment,
+  AvailabilitySlot, InsertAvailabilitySlot,
+  Specialization, InsertSpecialization,
+  UserRole, AppointmentStatus, DoctorStatus
+} from "@shared/schema";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 
 const MemoryStore = createMemoryStore(session);
 
+// Interface for all storage operations
 export interface IStorage {
-  // User operations
-  getUser(id: number): Promise<User | undefined>;
-  getUserByEmail(email: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<User>): Promise<User | undefined>;
-  getAllUsers(): Promise<User[]>;
-  getUsersByRole(role: string): Promise<User[]>;
-  
-  // Doctor operations
-  createDoctor(doctor: InsertDoctor): Promise<Doctor>;
-  getDoctorByUserId(userId: number): Promise<Doctor | undefined>;
-  getDoctorById(id: number): Promise<DoctorWithUser | undefined>;
-  getAllDoctors(): Promise<DoctorWithUser[]>;
-  getDoctorsBySpecialty(specialty: string): Promise<DoctorWithUser[]>;
-  updateDoctor(id: number, doctor: Partial<Doctor>): Promise<Doctor | undefined>;
-  
-  // TimeSlot operations
-  createTimeSlot(timeSlot: InsertTimeSlot): Promise<TimeSlot>;
-  getTimeSlotById(id: number): Promise<TimeSlot | undefined>;
-  getTimeSlotsByDoctorId(doctorId: number): Promise<TimeSlot[]>;
-  getAvailableTimeSlotsByDoctorId(doctorId: number): Promise<TimeSlot[]>;
-  updateTimeSlot(id: number, timeSlot: Partial<TimeSlot>): Promise<TimeSlot | undefined>;
-  
-  // Appointment operations
-  createAppointment(appointment: InsertAppointment): Promise<Appointment>;
-  getAppointmentById(id: number): Promise<AppointmentWithDetails | undefined>;
-  getAppointmentsByPatientId(patientId: number): Promise<AppointmentWithDetails[]>;
-  getAppointmentsByDoctorId(doctorId: number): Promise<AppointmentWithDetails[]>;
-  updateAppointment(id: number, appointment: Partial<Appointment>): Promise<Appointment | undefined>;
-  
-  // Specialty operations
-  createSpecialty(specialty: InsertSpecialty): Promise<Specialty>;
-  getAllSpecialties(): Promise<Specialty[]>;
-  
   // Session store
   sessionStore: session.SessionStore;
+  
+  // User operations
+  getUser(id: number): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, userData: Partial<User>): Promise<User | undefined>;
+  
+  // Doctor profile operations
+  getDoctorProfile(id: number): Promise<DoctorProfile | undefined>;
+  getDoctorProfileByUserId(userId: number): Promise<DoctorProfile | undefined>;
+  createDoctorProfile(profile: InsertDoctorProfile): Promise<DoctorProfile>;
+  updateDoctorProfile(id: number, profileData: Partial<DoctorProfile>): Promise<DoctorProfile | undefined>;
+  getAllDoctors(status?: DoctorStatus): Promise<Array<User & { profile: DoctorProfile }>>;
+  getDoctorsBySpecialization(specialization: string): Promise<Array<User & { profile: DoctorProfile }>>;
+  
+  // Availability slots operations
+  getAvailabilitySlot(id: number): Promise<AvailabilitySlot | undefined>;
+  createAvailabilitySlot(slot: InsertAvailabilitySlot): Promise<AvailabilitySlot>;
+  updateAvailabilitySlot(id: number, slotData: Partial<AvailabilitySlot>): Promise<AvailabilitySlot | undefined>;
+  getDoctorAvailability(doctorId: number): Promise<AvailabilitySlot[]>;
+  getAvailableSlotsForDoctor(doctorId: number, date?: string): Promise<AvailabilitySlot[]>;
+  
+  // Appointment operations
+  getAppointment(id: number): Promise<Appointment | undefined>;
+  createAppointment(appointment: InsertAppointment): Promise<Appointment>;
+  updateAppointment(id: number, appointmentData: Partial<Appointment>): Promise<Appointment | undefined>;
+  getPatientAppointments(patientId: number, status?: AppointmentStatus): Promise<Array<Appointment & { doctor: User & { profile: DoctorProfile } }>>;
+  getDoctorAppointments(doctorId: number, status?: AppointmentStatus): Promise<Array<Appointment & { patient: User }>>;
+  getAllAppointments(): Promise<Array<Appointment & { doctor: User & { profile: DoctorProfile }, patient: User }>>;
+  
+  // Specialization operations
+  getAllSpecializations(): Promise<Specialization[]>;
+  createSpecialization(specialization: InsertSpecialization): Promise<Specialization>;
+  
+  // Admin operations
+  getAllUsers(): Promise<User[]>;
+  getUsersByRole(role: UserRole): Promise<User[]>;
 }
 
+// Memory storage implementation
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
-  private doctors: Map<number, Doctor>;
-  private timeSlots: Map<number, TimeSlot>;
+  private doctorProfiles: Map<number, DoctorProfile>;
+  private availabilitySlots: Map<number, AvailabilitySlot>;
   private appointments: Map<number, Appointment>;
-  private specialties: Map<number, Specialty>;
-  public sessionStore: session.SessionStore;
+  private specializations: Map<number, Specialization>;
   
-  private userCurrentId: number;
-  private doctorCurrentId: number;
-  private timeSlotCurrentId: number;
-  private appointmentCurrentId: number;
-  private specialtyCurrentId: number;
-
+  sessionStore: session.SessionStore;
+  
+  private userIdCounter: number;
+  private doctorProfileIdCounter: number;
+  private availabilitySlotIdCounter: number;
+  private appointmentIdCounter: number;
+  private specializationIdCounter: number;
+  
   constructor() {
     this.users = new Map();
-    this.doctors = new Map();
-    this.timeSlots = new Map();
+    this.doctorProfiles = new Map();
+    this.availabilitySlots = new Map();
     this.appointments = new Map();
-    this.specialties = new Map();
+    this.specializations = new Map();
     
-    this.userCurrentId = 1;
-    this.doctorCurrentId = 1;
-    this.timeSlotCurrentId = 1;
-    this.appointmentCurrentId = 1;
-    this.specialtyCurrentId = 1;
+    this.userIdCounter = 1;
+    this.doctorProfileIdCounter = 1;
+    this.availabilitySlotIdCounter = 1;
+    this.appointmentIdCounter = 1;
+    this.specializationIdCounter = 1;
     
     this.sessionStore = new MemoryStore({
-      checkPeriod: 86400000, // prune expired entries every 24h
+      checkPeriod: 86400000, // 24 hours
     });
     
-    // Initialize with admin user
-    this.createUser({
-      name: "Admin User",
-      email: "admin@medibook.com",
-      password: "password123",
-      role: "admin",
-      approved: true
-    });
-    
-    // Initialize specialties
-    const specialtyNames = [
-      "Cardiology", "Dermatology", "Endocrinology", "Gastroenterology", 
-      "Neurology", "Obstetrics", "Oncology", "Ophthalmology", 
-      "Orthopedics", "Pediatrics", "Psychiatry", "Urology"
-    ];
-    
-    specialtyNames.forEach(name => {
-      this.createSpecialty({ name });
-    });
+    // Initialize with specializations and admin user
+    this.seedInitialData();
   }
 
+  private seedInitialData() {
+    // Add specializations
+    const specializations = [
+      "Cardiology", "Neurology", "Dermatology", "Orthopedics", 
+      "Pediatrics", "Psychiatry", "Gynecology", "Ophthalmology",
+      "Dentistry", "General Practice"
+    ];
+    
+    specializations.forEach(name => {
+      this.createSpecialization({ name });
+    });
+    
+    // Add admin user
+    this.createUser({
+      username: "admin",
+      password: "adminpassword", // Will be hashed in auth.ts
+      email: "admin@medibook.com",
+      firstName: "Admin",
+      lastName: "User",
+      role: UserRole.ADMIN
+    });
+  }
+  
   // User operations
   async getUser(id: number): Promise<User | undefined> {
     return this.users.get(id);
   }
-
-  async getUserByEmail(email: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.email.toLowerCase() === email.toLowerCase(),
-    );
+  
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(user => user.username === username);
   }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userCurrentId++;
-    const user: User = { ...insertUser, id };
+  
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(user => user.email === email);
+  }
+  
+  async createUser(userData: InsertUser): Promise<User> {
+    const id = this.userIdCounter++;
+    const createdAt = new Date();
+    const user: User = { ...userData, id, createdAt };
     this.users.set(id, user);
     return user;
   }
-
+  
   async updateUser(id: number, userData: Partial<User>): Promise<User | undefined> {
     const user = this.users.get(id);
     if (!user) return undefined;
@@ -121,215 +144,206 @@ export class MemStorage implements IStorage {
     this.users.set(id, updatedUser);
     return updatedUser;
   }
-
-  async getAllUsers(): Promise<User[]> {
-    return Array.from(this.users.values());
+  
+  // Doctor profile operations
+  async getDoctorProfile(id: number): Promise<DoctorProfile | undefined> {
+    return this.doctorProfiles.get(id);
   }
-
-  async getUsersByRole(role: string): Promise<User[]> {
-    return Array.from(this.users.values()).filter(
-      (user) => user.role === role
-    );
+  
+  async getDoctorProfileByUserId(userId: number): Promise<DoctorProfile | undefined> {
+    return Array.from(this.doctorProfiles.values()).find(profile => profile.userId === userId);
   }
-
-  // Doctor operations
-  async createDoctor(insertDoctor: InsertDoctor): Promise<Doctor> {
-    const id = this.doctorCurrentId++;
-    const doctor: Doctor = { ...insertDoctor, id };
-    this.doctors.set(id, doctor);
-    return doctor;
-  }
-
-  async getDoctorByUserId(userId: number): Promise<Doctor | undefined> {
-    return Array.from(this.doctors.values()).find(
-      (doctor) => doctor.userId === userId
-    );
-  }
-
-  async getDoctorById(id: number): Promise<DoctorWithUser | undefined> {
-    const doctor = this.doctors.get(id);
-    if (!doctor) return undefined;
-    
-    const user = await this.getUser(doctor.userId);
-    if (!user) return undefined;
-    
-    return { ...doctor, user };
-  }
-
-  async getAllDoctors(): Promise<DoctorWithUser[]> {
-    const doctors = Array.from(this.doctors.values());
-    const result: DoctorWithUser[] = [];
-    
-    for (const doctor of doctors) {
-      const user = await this.getUser(doctor.userId);
-      if (user && user.approved) {
-        result.push({ ...doctor, user });
-      }
-    }
-    
-    return result;
-  }
-
-  async getDoctorsBySpecialty(specialty: string): Promise<DoctorWithUser[]> {
-    const doctors = Array.from(this.doctors.values()).filter(
-      (doctor) => doctor.specialty.toLowerCase() === specialty.toLowerCase()
-    );
-    
-    const result: DoctorWithUser[] = [];
-    
-    for (const doctor of doctors) {
-      const user = await this.getUser(doctor.userId);
-      if (user && user.approved) {
-        result.push({ ...doctor, user });
-      }
-    }
-    
-    return result;
-  }
-
-  async updateDoctor(id: number, doctorData: Partial<Doctor>): Promise<Doctor | undefined> {
-    const doctor = this.doctors.get(id);
-    if (!doctor) return undefined;
-    
-    const updatedDoctor = { ...doctor, ...doctorData };
-    this.doctors.set(id, updatedDoctor);
-    return updatedDoctor;
-  }
-
-  // TimeSlot operations
-  async createTimeSlot(insertTimeSlot: InsertTimeSlot): Promise<TimeSlot> {
-    const id = this.timeSlotCurrentId++;
-    const timeSlot: TimeSlot = { ...insertTimeSlot, id };
-    this.timeSlots.set(id, timeSlot);
-    return timeSlot;
-  }
-
-  async getTimeSlotById(id: number): Promise<TimeSlot | undefined> {
-    return this.timeSlots.get(id);
-  }
-
-  async getTimeSlotsByDoctorId(doctorId: number): Promise<TimeSlot[]> {
-    return Array.from(this.timeSlots.values()).filter(
-      (timeSlot) => timeSlot.doctorId === doctorId
-    );
-  }
-
-  async getAvailableTimeSlotsByDoctorId(doctorId: number): Promise<TimeSlot[]> {
-    return Array.from(this.timeSlots.values()).filter(
-      (timeSlot) => timeSlot.doctorId === doctorId && !timeSlot.isBooked
-    );
-  }
-
-  async updateTimeSlot(id: number, timeSlotData: Partial<TimeSlot>): Promise<TimeSlot | undefined> {
-    const timeSlot = this.timeSlots.get(id);
-    if (!timeSlot) return undefined;
-    
-    const updatedTimeSlot = { ...timeSlot, ...timeSlotData };
-    this.timeSlots.set(id, updatedTimeSlot);
-    return updatedTimeSlot;
-  }
-
-  // Appointment operations
-  async createAppointment(insertAppointment: InsertAppointment): Promise<Appointment> {
-    const id = this.appointmentCurrentId++;
-    const appointment: Appointment = { 
-      ...insertAppointment, 
-      id,
-      createdAt: new Date()
+  
+  async createDoctorProfile(profileData: InsertDoctorProfile): Promise<DoctorProfile> {
+    const id = this.doctorProfileIdCounter++;
+    const profile: DoctorProfile = { 
+      ...profileData, 
+      id, 
+      rating: 0, 
+      reviewCount: 0 
     };
+    this.doctorProfiles.set(id, profile);
+    return profile;
+  }
+  
+  async updateDoctorProfile(id: number, profileData: Partial<DoctorProfile>): Promise<DoctorProfile | undefined> {
+    const profile = this.doctorProfiles.get(id);
+    if (!profile) return undefined;
+    
+    const updatedProfile = { ...profile, ...profileData };
+    this.doctorProfiles.set(id, updatedProfile);
+    return updatedProfile;
+  }
+  
+  async getAllDoctors(status?: DoctorStatus): Promise<Array<User & { profile: DoctorProfile }>> {
+    const doctorProfiles = Array.from(this.doctorProfiles.values());
+    const filteredProfiles = status 
+      ? doctorProfiles.filter(profile => profile.status === status)
+      : doctorProfiles;
+    
+    return filteredProfiles.map(profile => {
+      const user = this.users.get(profile.userId);
+      if (!user) throw new Error(`User not found for doctor profile ${profile.id}`);
+      return { ...user, profile };
+    });
+  }
+  
+  async getDoctorsBySpecialization(specialization: string): Promise<Array<User & { profile: DoctorProfile }>> {
+    const doctors = await this.getAllDoctors(DoctorStatus.APPROVED);
+    return doctors.filter(doctor => doctor.profile.specialization === specialization);
+  }
+  
+  // Availability slots operations
+  async getAvailabilitySlot(id: number): Promise<AvailabilitySlot | undefined> {
+    return this.availabilitySlots.get(id);
+  }
+  
+  async createAvailabilitySlot(slotData: InsertAvailabilitySlot): Promise<AvailabilitySlot> {
+    const id = this.availabilitySlotIdCounter++;
+    const slot: AvailabilitySlot = { ...slotData, id, isBooked: false };
+    this.availabilitySlots.set(id, slot);
+    return slot;
+  }
+  
+  async updateAvailabilitySlot(id: number, slotData: Partial<AvailabilitySlot>): Promise<AvailabilitySlot | undefined> {
+    const slot = this.availabilitySlots.get(id);
+    if (!slot) return undefined;
+    
+    const updatedSlot = { ...slot, ...slotData };
+    this.availabilitySlots.set(id, updatedSlot);
+    return updatedSlot;
+  }
+  
+  async getDoctorAvailability(doctorId: number): Promise<AvailabilitySlot[]> {
+    return Array.from(this.availabilitySlots.values())
+      .filter(slot => slot.doctorId === doctorId);
+  }
+  
+  async getAvailableSlotsForDoctor(doctorId: number, date?: string): Promise<AvailabilitySlot[]> {
+    const slots = Array.from(this.availabilitySlots.values())
+      .filter(slot => slot.doctorId === doctorId && !slot.isBooked);
+    
+    if (date) {
+      return slots.filter(slot => slot.date === date);
+    }
+    
+    return slots;
+  }
+  
+  // Appointment operations
+  async getAppointment(id: number): Promise<Appointment | undefined> {
+    return this.appointments.get(id);
+  }
+  
+  async createAppointment(appointmentData: InsertAppointment): Promise<Appointment> {
+    const id = this.appointmentIdCounter++;
+    const createdAt = new Date();
+    const appointment: Appointment = { ...appointmentData, id, createdAt };
     this.appointments.set(id, appointment);
     
-    // Mark the time slot as booked
-    const timeSlot = await this.getTimeSlotById(appointment.timeSlotId);
-    if (timeSlot) {
-      await this.updateTimeSlot(timeSlot.id, { isBooked: true });
+    // Mark the slot as booked
+    const slot = await this.getAvailabilitySlot(appointmentData.slotId);
+    if (slot) {
+      await this.updateAvailabilitySlot(slot.id, { isBooked: true });
     }
     
     return appointment;
   }
-
-  async getAppointmentById(id: number): Promise<AppointmentWithDetails | undefined> {
-    const appointment = this.appointments.get(id);
-    if (!appointment) return undefined;
-    
-    const timeSlot = await this.getTimeSlotById(appointment.timeSlotId);
-    if (!timeSlot) return undefined;
-    
-    const doctorWithUser = await this.getDoctorById(appointment.doctorId);
-    if (!doctorWithUser) return undefined;
-    
-    const patient = await this.getUser(appointment.patientId);
-    if (!patient) return undefined;
-    
-    return {
-      ...appointment,
-      timeSlot,
-      doctor: doctorWithUser,
-      patient
-    };
-  }
-
-  async getAppointmentsByPatientId(patientId: number): Promise<AppointmentWithDetails[]> {
-    const appointments = Array.from(this.appointments.values()).filter(
-      (appointment) => appointment.patientId === patientId
-    );
-    
-    const result: AppointmentWithDetails[] = [];
-    
-    for (const appointment of appointments) {
-      const details = await this.getAppointmentById(appointment.id);
-      if (details) {
-        result.push(details);
-      }
-    }
-    
-    return result;
-  }
-
-  async getAppointmentsByDoctorId(doctorId: number): Promise<AppointmentWithDetails[]> {
-    const appointments = Array.from(this.appointments.values()).filter(
-      (appointment) => appointment.doctorId === doctorId
-    );
-    
-    const result: AppointmentWithDetails[] = [];
-    
-    for (const appointment of appointments) {
-      const details = await this.getAppointmentById(appointment.id);
-      if (details) {
-        result.push(details);
-      }
-    }
-    
-    return result;
-  }
-
+  
   async updateAppointment(id: number, appointmentData: Partial<Appointment>): Promise<Appointment | undefined> {
     const appointment = this.appointments.get(id);
     if (!appointment) return undefined;
     
-    // If status is changed to cancelled, free up the time slot
-    if (appointmentData.status === 'cancelled' && appointment.status !== 'cancelled') {
-      const timeSlot = await this.getTimeSlotById(appointment.timeSlotId);
-      if (timeSlot) {
-        await this.updateTimeSlot(timeSlot.id, { isBooked: false });
+    const updatedAppointment = { ...appointment, ...appointmentData };
+    this.appointments.set(id, updatedAppointment);
+    
+    // If appointment is cancelled, make the slot available again
+    if (appointmentData.status === AppointmentStatus.CANCELLED) {
+      const slot = await this.getAvailabilitySlot(appointment.slotId);
+      if (slot) {
+        await this.updateAvailabilitySlot(slot.id, { isBooked: false });
       }
     }
     
-    const updatedAppointment = { ...appointment, ...appointmentData };
-    this.appointments.set(id, updatedAppointment);
     return updatedAppointment;
   }
-
-  // Specialty operations
-  async createSpecialty(insertSpecialty: InsertSpecialty): Promise<Specialty> {
-    const id = this.specialtyCurrentId++;
-    const specialty: Specialty = { ...insertSpecialty, id };
-    this.specialties.set(id, specialty);
-    return specialty;
+  
+  async getPatientAppointments(patientId: number, status?: AppointmentStatus): Promise<Array<Appointment & { doctor: User & { profile: DoctorProfile } }>> {
+    const appointments = Array.from(this.appointments.values())
+      .filter(appointment => appointment.patientId === patientId);
+    
+    const filteredAppointments = status
+      ? appointments.filter(appointment => appointment.status === status)
+      : appointments;
+    
+    return Promise.all(filteredAppointments.map(async appointment => {
+      const doctorProfile = await this.getDoctorProfile(appointment.doctorId);
+      if (!doctorProfile) throw new Error(`Doctor profile not found for appointment ${appointment.id}`);
+      
+      const doctor = await this.getUser(doctorProfile.userId);
+      if (!doctor) throw new Error(`User not found for doctor profile ${doctorProfile.id}`);
+      
+      return { ...appointment, doctor: { ...doctor, profile: doctorProfile } };
+    }));
   }
-
-  async getAllSpecialties(): Promise<Specialty[]> {
-    return Array.from(this.specialties.values());
+  
+  async getDoctorAppointments(doctorId: number, status?: AppointmentStatus): Promise<Array<Appointment & { patient: User }>> {
+    const appointments = Array.from(this.appointments.values())
+      .filter(appointment => appointment.doctorId === doctorId);
+    
+    const filteredAppointments = status
+      ? appointments.filter(appointment => appointment.status === status)
+      : appointments;
+    
+    return Promise.all(filteredAppointments.map(async appointment => {
+      const patient = await this.getUser(appointment.patientId);
+      if (!patient) throw new Error(`Patient not found for appointment ${appointment.id}`);
+      
+      return { ...appointment, patient };
+    }));
+  }
+  
+  async getAllAppointments(): Promise<Array<Appointment & { doctor: User & { profile: DoctorProfile }, patient: User }>> {
+    const appointments = Array.from(this.appointments.values());
+    
+    return Promise.all(appointments.map(async appointment => {
+      const doctorProfile = await this.getDoctorProfile(appointment.doctorId);
+      if (!doctorProfile) throw new Error(`Doctor profile not found for appointment ${appointment.id}`);
+      
+      const doctor = await this.getUser(doctorProfile.userId);
+      if (!doctor) throw new Error(`User not found for doctor profile ${doctorProfile.id}`);
+      
+      const patient = await this.getUser(appointment.patientId);
+      if (!patient) throw new Error(`Patient not found for appointment ${appointment.id}`);
+      
+      return { 
+        ...appointment, 
+        doctor: { ...doctor, profile: doctorProfile },
+        patient
+      };
+    }));
+  }
+  
+  // Specialization operations
+  async getAllSpecializations(): Promise<Specialization[]> {
+    return Array.from(this.specializations.values());
+  }
+  
+  async createSpecialization(specializationData: InsertSpecialization): Promise<Specialization> {
+    const id = this.specializationIdCounter++;
+    const specialization: Specialization = { ...specializationData, id };
+    this.specializations.set(id, specialization);
+    return specialization;
+  }
+  
+  // Admin operations
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+  
+  async getUsersByRole(role: UserRole): Promise<User[]> {
+    return Array.from(this.users.values())
+      .filter(user => user.role === role);
   }
 }
 
