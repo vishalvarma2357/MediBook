@@ -52,19 +52,28 @@ export interface IStorage {
   getUsersByRole(role: UserRole): Promise<User[]>;
 }
 
-// Import MemStorage class from memory-storage file
+// Import storage implementations
 import { MemStorage } from "./models/memory-storage";
-
-// We're going to use in-memory storage for this project
-// which will be seeded with sample data
+import { MongoStorage } from "./storage.mongo";
 
 // Create a singleton storage instance
 let storageInstance: IStorage;
 
 // Initialize storage
-export async function initializeStorage(useMongoDB = false): Promise<void> {
-  console.log('[storage] Using in-memory storage with sample data');
-  storageInstance = new MemStorage();
+export async function initializeStorage(useMongoDB = true): Promise<void> {
+  try {
+    if (useMongoDB) {
+      console.log('[storage] Using MongoDB storage');
+      storageInstance = new MongoStorage() as IStorage;
+    } else {
+      console.log('[storage] Using in-memory storage with sample data');
+      storageInstance = new MemStorage();
+    }
+  } catch (error) {
+    console.error('[storage] Error initializing storage:', error);
+    console.log('[storage] Falling back to in-memory storage');
+    storageInstance = new MemStorage();
+  }
 }
 
 // Get the storage instance

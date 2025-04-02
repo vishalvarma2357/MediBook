@@ -21,9 +21,23 @@ export class MongoStorage implements IStorage {
   sessionStore: session.Store;
   
   constructor() {
-    this.sessionStore = mongoSessionStore({
-      secret: process.env.SESSION_SECRET || 'medibook-session-secret'
-    });
+    try {
+      // Create session store with minimal options
+      const sessionOptions = {
+        secret: process.env.SESSION_SECRET || 'medibook-session-secret'
+      };
+      
+      this.sessionStore = mongoSessionStore(sessionOptions);
+      console.log('[storage] MongoDB session store created successfully');
+    } catch (error) {
+      console.error('[storage] Failed to create MongoDB session store:', error);
+      // Fallback to memory store if MongoDB session store fails
+      const MemoryStore = require('memorystore')(session);
+      this.sessionStore = new MemoryStore({
+        checkPeriod: 86400000 // prune expired entries every 24h
+      });
+      console.log('[storage] Fallback to memory session store');
+    }
     
     // Seed initial data
     this.seedInitialData();
@@ -70,7 +84,6 @@ export class MongoStorage implements IStorage {
       } catch (seedError) {
         clearTimeout(seedTimeout);
         console.error('[database] Error seeding specializations:', seedError);
-      }
       }
       
       // Check if admin user exists
@@ -259,7 +272,7 @@ export class MongoStorage implements IStorage {
   // Helper functions to convert between Mongoose and app types
   private convertUserToType(user: IUser): UserType {
     return {
-      id: parseInt(user._id.toString()),
+      id: user.id,
       username: user.username,
       password: user.password,
       email: user.email,
@@ -272,8 +285,8 @@ export class MongoStorage implements IStorage {
   
   private convertDoctorProfileToType(profile: IDoctorProfile): DoctorProfileType {
     return {
-      id: parseInt(profile._id.toString()),
-      userId: parseInt(profile.userId.toString()),
+      id: profile.id,
+      userId: profile.userId as number, // Cast to number as expected in DoctorProfileType
       specialization: profile.specialization,
       hospital: profile.hospital,
       location: profile.location,
@@ -290,8 +303,8 @@ export class MongoStorage implements IStorage {
   
   private convertAvailabilitySlotToType(slot: IAvailabilitySlot): AvailabilitySlotType {
     return {
-      id: parseInt(slot._id.toString()),
-      doctorId: parseInt(slot.doctorId.toString()),
+      id: slot.id,
+      doctorId: slot.doctorId as number, // Cast to number as expected in AvailabilitySlotType
       date: slot.date,
       startTime: slot.startTime,
       endTime: slot.endTime,
@@ -302,10 +315,10 @@ export class MongoStorage implements IStorage {
   
   private convertAppointmentToType(appointment: IAppointment): AppointmentType {
     return {
-      id: parseInt(appointment._id.toString()),
-      patientId: parseInt(appointment.patientId.toString()),
-      doctorId: parseInt(appointment.doctorId.toString()),
-      slotId: parseInt(appointment.slotId.toString()),
+      id: appointment.id,
+      patientId: appointment.patientId as number, // Cast to number as expected in AppointmentType
+      doctorId: appointment.doctorId as number, // Cast to number as expected in AppointmentType
+      slotId: appointment.slotId as number, // Cast to number as expected in AppointmentType
       date: appointment.date,
       startTime: appointment.startTime,
       endTime: appointment.endTime,
@@ -317,7 +330,7 @@ export class MongoStorage implements IStorage {
   
   private convertSpecializationToType(specialization: ISpecialization): SpecializationType {
     return {
-      id: parseInt(specialization._id.toString()),
+      id: specialization.id,
       name: specialization.name
     };
   }

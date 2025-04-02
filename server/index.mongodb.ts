@@ -42,10 +42,43 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// MongoDB URL sanitization function
+const sanitizeMongoUrl = (url: string): string => {
+  try {
+    // For mongodb+srv protocol, we need to ensure there's no port specified
+    if (url.startsWith('mongodb+srv://')) {
+      try {
+        const parsedUrl = new URL(url);
+        // Reconstruct without port
+        return `mongodb+srv://${parsedUrl.username}:${parsedUrl.password}@${parsedUrl.hostname}${parsedUrl.pathname}${parsedUrl.search}`;
+      } catch (urlError) {
+        console.error('[database] Error parsing MongoDB URL with new URL():', urlError);
+        
+        // Fallback to manual parsing if URL parsing fails
+        const parts = url.split('@');
+        if (parts.length === 2) {
+          const authPart = parts[0]; // mongodb+srv://username:password
+          const hostPathParts = parts[1].split('/');
+          const hostPart = hostPathParts[0].split(':')[0]; // Remove port if exists
+          const pathPart = hostPathParts.slice(1).join('/');
+          
+          return `${authPart}@${hostPart}${pathPart ? '/' + pathPart : ''}`;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[database] Error sanitizing MongoDB URL:', error);
+  }
+  // Return original URL as fallback
+  return url;
+};
+
 // MongoDB connection
 const connectToMongoDB = async () => {
   try {
-    const mongoUrl = process.env.MONGO_URL || 'mongodb://localhost:27017/medibook';
+    // Get MongoDB URL
+    const rawMongoUrl = process.env.MONGO_URL || 'mongodb://localhost:27017/medibook';
+    const mongoUrl = sanitizeMongoUrl(rawMongoUrl);
     
     console.log('[database] Connecting to MongoDB...');
     await mongoose.connect(mongoUrl, {
@@ -54,10 +87,10 @@ const connectToMongoDB = async () => {
       socketTimeoutMS: 60000,
     });
     console.log('[database] Connected to MongoDB successfully');
-    return true;
+    return { success: true, mongoUrl };
   } catch (error) {
     console.error('[database] MongoDB connection error:', error);
-    return false;
+    return { success: false, mongoUrl: '' };
   }
 };
 
@@ -65,9 +98,9 @@ const connectToMongoDB = async () => {
 (async () => {
   try {
     // Connect to MongoDB
-    const dbConnected = await connectToMongoDB();
+    const { success, mongoUrl } = await connectToMongoDB();
     
-    if (!dbConnected) {
+    if (!success) {
       console.error("Failed to connect to MongoDB. Exiting application.");
       process.exit(1);
     }
@@ -78,7 +111,7 @@ const connectToMongoDB = async () => {
       resave: false,
       saveUninitialized: false,
       store: MongoStore.create({
-        mongoUrl: process.env.MONGO_URL || 'mongodb://localhost:27017/medibook',
+        mongoUrl: mongoUrl, // Use the same sanitized URL from the MongoDB connection
         collectionName: 'sessions',
       }),
       cookie: {
