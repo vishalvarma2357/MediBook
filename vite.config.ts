@@ -13,24 +13,20 @@ export default defineConfig({
     react(),
     runtimeErrorOverlay(),
     themePlugin(),
-    ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer(),
-          ),
-        ]
-      : []),
-  ],
+    // FIX: Ensure `cartographer` is only used in Replit
+    process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
+      ? (await import("@replit/vite-plugin-cartographer")).cartographer()
+      : null,
+  ].filter(Boolean), // Removes `null` values to avoid errors
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "client", "src"),
-      "@shared": path.resolve(__dirname, "shared"),
+      "@": path.resolve(__dirname, "client/src"), // Ensure this path exists
+      "@shared": path.resolve(__dirname, "shared"), // Ensure this path exists
     },
   },
   root: path.resolve(__dirname, "client"),
   build: {
-    outDir: path.resolve(__dirname, "dist/public"),
+    outDir: path.resolve(__dirname, "dist"), // FIX: Changed from "dist/public" to "dist"
     emptyOutDir: true,
   },
 });
