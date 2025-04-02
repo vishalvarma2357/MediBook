@@ -120,7 +120,9 @@ export const patientRegistrationSchema = insertUserSchema.extend({
 });
 
 export const doctorRegistrationSchema = z.object({
-  user: insertUserSchema,
+  user: insertUserSchema.extend({
+    confirmPassword: z.string().min(1, "Confirm password is required")
+  }),
   profile: insertDoctorProfileSchema.omit({ userId: true, status: true })
 }).refine((data) => data.user.password === data.user.confirmPassword, {
   message: "Passwords don't match",
