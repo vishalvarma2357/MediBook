@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { formatDate, formatTime } from "@/lib/utils";
-import { Card, CardContent } from "@/components/ui/card";
+import { Calendar as CalendarIcon, Trash2, Plus } from "lucide-react";
+import { cn, formatDate, formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { 
-  ChevronLeft, 
-  ChevronRight, 
-  PlusCircle, 
-  Trash2 
-} from "lucide-react";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +24,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -36,357 +36,404 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { insertAvailabilitySlotSchema } from "@shared/schema";
 import { z } from "zod";
-import { useAuth } from "@/hooks/use-auth";
 
-const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-// Form schema for creating availability slots
-const slotSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be in HH:MM format"),
-  endTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be in HH:MM format"),
-  duration: z.number().min(15, "Duration must be at least 15 minutes").max(180, "Duration must be less than 3 hours")
-}).refine(data => data.startTime < data.endTime, {
-  message: "End time must be after start time",
-  path: ["endTime"]
+// Extending the schema to include field validation and slot duration
+const timeSlotSchema = insertAvailabilitySlotSchema.extend({
+  date: z.string().min(1, "Date is required"),
+  startTime: z.string().min(1, "Start time is required"),
+  endTime: z.string().min(1, "End time is required"),
+  duration: z.number().min(15, "Minimum duration is 15 minutes").max(120, "Maximum duration is 2 hours"),
+  isBooked: z.boolean().optional(),
 });
 
-type SlotFormValues = z.infer<typeof slotSchema>;
+type TimeSlotFormValues = z.infer<typeof timeSlotSchema>;
 
 export default function AvailabilityCalendar() {
-  const { toast } = useToast();
   const { user } = useAuth();
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const { toast } = useToast();
 
-  // Get user's doctor profile ID
-  const doctorProfileId = user?.doctorProfile?.id;
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
+  const [isAddSlotDialogOpen, setIsAddSlotDialogOpen] = useState(false);
 
-  // Query to fetch doctor's availability slots
-  const { data: slots, isLoading } = useQuery({
-    queryKey: ["/api/availability", doctorProfileId],
+  // Format selected date for API queries
+  const formattedDate = selectedDate ? selectedDate.toISOString().split('T')[0] : '';
+
+  // Get doctor's availability for selected date
+  const { data: availabilitySlots, isLoading: slotsLoading } = useQuery({
+    queryKey: ["/api/doctors/availability", user?.doctorProfile?.id, formattedDate],
     queryFn: async () => {
-      if (!doctorProfileId) return [];
-      const res = await fetch(`/api/doctors/${doctorProfileId}/availability`);
+      const res = await fetch(`/api/doctors/${user?.doctorProfile?.id}/availability?date=${formattedDate}`);
       if (!res.ok) throw new Error("Failed to fetch availability");
       return res.json();
     },
-    enabled: !!doctorProfileId,
-    staleTime: 60000, // 1 minute
+    enabled: !!user?.doctorProfile?.id && !!formattedDate,
   });
 
-  // Create slot mutation
-  const createSlotMutation = useMutation({
-    mutationFn: async (data: SlotFormValues) => {
+  // Form for adding new availability slot
+  const form = useForm<TimeSlotFormValues>({
+    resolver: zodResolver(timeSlotSchema),
+    defaultValues: {
+      date: formattedDate,
+      startTime: "09:00",
+      endTime: "09:30",
+      duration: 30,
+    },
+  });
+
+  // Update form default date when selected date changes
+  useEffect(() => {
+    form.setValue("date", formattedDate);
+  }, [formattedDate, form]);
+
+  // Add availability slot mutation
+  const addSlotMutation = useMutation({
+    mutationFn: async (data: TimeSlotFormValues) => {
       return apiRequest("POST", "/api/availability", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/availability"] });
       toast({
-        title: "Success",
-        description: "Availability slot has been created",
+        title: "Availability added",
+        description: "Your availability slot has been successfully added.",
       });
-      setIsDialogOpen(false);
+      setIsAddSlotDialogOpen(false);
+      queryClient.invalidateQueries({ 
+        queryKey: ["/api/doctors/availability", user?.doctorProfile?.id] 
+      });
+      form.reset();
     },
     onError: (error) => {
       toast({
-        title: "Error",
-        description: `Failed to create availability: ${error.message}`,
+        title: "Error adding availability",
+        description: error.message || "Something went wrong",
         variant: "destructive",
       });
     },
   });
 
-  // Delete slot mutation
+  // Delete availability slot mutation
   const deleteSlotMutation = useMutation({
     mutationFn: async (slotId: number) => {
-      return apiRequest("DELETE", `/api/availability/${slotId}`, undefined);
+      return apiRequest("DELETE", `/api/availability/${slotId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/availability"] });
       toast({
-        title: "Success",
-        description: "Availability slot has been removed",
+        title: "Availability removed",
+        description: "Your availability slot has been successfully removed.",
+      });
+      queryClient.invalidateQueries({ 
+        queryKey: ["/api/doctors/availability", user?.doctorProfile?.id] 
       });
     },
     onError: (error) => {
       toast({
-        title: "Error",
-        description: `Failed to delete availability: ${error.message}`,
+        title: "Error removing availability",
+        description: error.message || "Something went wrong",
         variant: "destructive",
       });
     },
   });
 
-  const form = useForm<SlotFormValues>({
-    resolver: zodResolver(slotSchema),
-    defaultValues: {
-      date: new Date().toISOString().split('T')[0],
-      startTime: "09:00",
-      endTime: "09:30",
-      duration: 30
-    },
-  });
-
-  function onSubmit(values: SlotFormValues) {
-    createSlotMutation.mutate(values);
-  }
-
-  // Navigation functions for calendar
-  const goToPreviousMonth = () => {
-    setCurrentMonth(prev => {
-      const newDate = new Date(prev);
-      newDate.setMonth(prev.getMonth() - 1);
-      return newDate;
-    });
+  // Handle form submission for adding new slot
+  const onSubmit = (values: TimeSlotFormValues) => {
+    addSlotMutation.mutate(values);
   };
 
-  const goToNextMonth = () => {
-    setCurrentMonth(prev => {
-      const newDate = new Date(prev);
-      newDate.setMonth(prev.getMonth() + 1);
-      return newDate;
-    });
-  };
-
-  // Format month for display
-  const formattedMonth = currentMonth.toLocaleString('default', { 
-    month: 'long', 
-    year: 'numeric' 
-  });
-
-  // Group slots by day
-  const slotsByDay = {};
-  if (slots) {
-    slots.forEach(slot => {
-      if (!slotsByDay[slot.date]) {
-        slotsByDay[slot.date] = [];
+  // Generate time options for select dropdowns
+  const generateTimeOptions = () => {
+    const options = [];
+    for (let hour = 8; hour <= 20; hour++) {
+      for (let minute = 0; minute < 60; minute += 15) {
+        const formattedHour = hour.toString().padStart(2, "0");
+        const formattedMinute = minute.toString().padStart(2, "0");
+        options.push(`${formattedHour}:${formattedMinute}`);
       }
-      slotsByDay[slot.date].push(slot);
-    });
-  }
-
-  // Get dates for the month
-  const getDaysInMonth = (year, month) => {
-    const date = new Date(year, month, 1);
-    const days = [];
-    while (date.getMonth() === month) {
-      days.push(new Date(date));
-      date.setDate(date.getDate() + 1);
     }
-    return days;
+    return options;
   };
 
-  const monthDays = getDaysInMonth(
-    currentMonth.getFullYear(),
-    currentMonth.getMonth()
-  );
+  const timeOptions = generateTimeOptions();
 
-  // Calculate the day of week for the first day of the month (0-6)
-  const firstDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay();
+  // Calculate end time based on start time and duration
+  const calculateEndTime = (startTime: string, duration: number) => {
+    const [hours, minutes] = startTime.split(":").map(Number);
+    const startDate = new Date();
+    startDate.setHours(hours, minutes, 0, 0);
+    const endDate = new Date(startDate.getTime() + duration * 60000);
+    const endHours = endDate.getHours().toString().padStart(2, "0");
+    const endMinutes = endDate.getMinutes().toString().padStart(2, "0");
+    return `${endHours}:${endMinutes}`;
+  };
 
-  // Create array with empty cells for the days before the first day of month
-  const calendarDays = [...Array(firstDayOfMonth).fill(null), ...monthDays];
-
-  if (isLoading) {
-    return (
-      <Card className="animate-pulse">
-        <CardContent className="p-6">
-          <div className="h-8 bg-neutral-100 rounded mb-4 w-32"></div>
-          <div className="grid grid-cols-7 gap-4">
-            {[...Array(7)].map((_, i) => (
-              <div key={i} className="h-40 bg-neutral-100 rounded"></div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // Update end time when start time or duration changes
+  useEffect(() => {
+    const startTime = form.watch("startTime");
+    const duration = form.watch("duration");
+    
+    if (startTime && duration) {
+      const endTime = calculateEndTime(startTime, duration);
+      form.setValue("endTime", endTime);
+    }
+  }, [form.watch("startTime"), form.watch("duration")]);
 
   return (
-    <div>
+    <div className="mb-10">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-neutral-800">Manage Availability</h2>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5" /> Add Time Slots
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Availability Slot</DialogTitle>
-              <DialogDescription>
-                Set your available time for patient appointments.
-              </DialogDescription>
-            </DialogHeader>
-            
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Date</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="startTime"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Start Time</FormLabel>
-                        <FormControl>
-                          <Input type="time" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  
-                  <FormField
-                    control={form.control}
-                    name="endTime"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>End Time</FormLabel>
-                        <FormControl>
-                          <Input type="time" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                
-                <FormField
-                  control={form.control}
-                  name="duration"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Appointment Duration (minutes)</FormLabel>
-                      <Select 
-                        onValueChange={(value) => field.onChange(parseInt(value))}
-                        defaultValue={field.value.toString()}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select duration" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="15">15 minutes</SelectItem>
-                          <SelectItem value="30">30 minutes</SelectItem>
-                          <SelectItem value="45">45 minutes</SelectItem>
-                          <SelectItem value="60">60 minutes</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        This will determine how many appointment slots will be created
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <DialogFooter>
-                  <Button type="submit" disabled={createSlotMutation.isPending}>
-                    {createSlotMutation.isPending ? "Creating..." : "Create Slot"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </Form>
-          </DialogContent>
-        </Dialog>
+        <h2 className="text-xl font-bold text-neutral-800">Manage Your Availability</h2>
+        <Button 
+          className="flex items-center gap-2" 
+          onClick={() => setIsAddSlotDialogOpen(true)}
+        >
+          <Plus className="h-4 w-4" /> Add Availability
+        </Button>
       </div>
 
-      <Card>
-        <CardContent className="p-6">
-          <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden mb-6">
-            <div className="bg-neutral-100 p-4">
-              <div className="flex justify-between items-center">
-                <Button variant="ghost" size="icon" onClick={goToPreviousMonth}>
-                  <ChevronLeft className="h-5 w-5" />
-                </Button>
-                <h4 className="font-medium text-neutral-800">{formattedMonth}</h4>
-                <Button variant="ghost" size="icon" onClick={goToNextMonth}>
-                  <ChevronRight className="h-5 w-5" />
-                </Button>
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Date selector */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Select Date</CardTitle>
+            <CardDescription>Choose a date to view or add availability</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col space-y-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start text-left font-normal",
+                      !selectedDate && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {selectedDate ? formatDate(selectedDate.toISOString().split('T')[0]) : "Select date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={setSelectedDate}
+                    initialFocus
+                    disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          <div className="grid grid-cols-7 gap-4">
-            {/* Day headers */}
-            {days.map(day => (
-              <div key={day} className="text-center text-neutral-600 font-medium mb-2">
-                {day}
+        {/* Availability slots */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle>Available Time Slots</CardTitle>
+            <CardDescription>Your available appointment slots for {selectedDate ? formatDate(formattedDate) : "selected date"}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {slotsLoading ? (
+              <div className="flex items-center justify-center p-6">
+                <p className="text-neutral-600">Loading availability...</p>
               </div>
-            ))}
-
-            {/* Calendar days */}
-            {calendarDays.map((day, index) => {
-              if (!day) {
-                // Empty cell for days before the start of the month
-                return <div key={`empty-${index}`} className="text-center opacity-30"></div>;
-              }
-
-              const dateStr = day.toISOString().split('T')[0];
-              const isToday = new Date().toISOString().split('T')[0] === dateStr;
-              const daySlots = slotsByDay[dateStr] || [];
-              
-              return (
-                <div 
-                  key={dateStr} 
-                  className={`text-center ${isToday ? 'bg-primary-50 border-primary-100' : 'bg-neutral-50'} rounded-lg p-3`}
+            ) : !availabilitySlots || availabilitySlots.length === 0 ? (
+              <div className="bg-neutral-50 rounded-lg p-6 text-center">
+                <p className="text-neutral-600 mb-2">No availability set for this date.</p>
+                <Button 
+                  variant="outline" 
+                  className="mx-auto" 
+                  onClick={() => setIsAddSlotDialogOpen(true)}
                 >
-                  <p className={`font-medium ${isToday ? 'text-primary' : 'text-neutral-600'} mb-2`}>
-                    {day.getDate()}
-                  </p>
-                  <div className="space-y-2">
-                    {daySlots.map(slot => (
-                      <div 
-                        key={slot.id} 
-                        className={`bg-white rounded-lg p-2 border ${slot.isBooked ? 'border-neutral-200 text-neutral-400' : 'border-primary-100'} text-left text-sm`}
-                      >
-                        <div className="flex justify-between items-center">
-                          <p className="font-medium">{formatTime(slot.startTime)}</p>
-                          {!slot.isBooked && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-5 w-5 -mr-1" 
-                              onClick={() => deleteSlotMutation.mutate(slot.id)}
-                            >
-                              <Trash2 className="h-3 w-3 text-neutral-400 hover:text-red-500" />
-                            </Button>
-                          )}
-                        </div>
-                        <p className="text-xs text-neutral-500">{slot.duration} min{slot.isBooked ? ' (Booked)' : ''}</p>
-                      </div>
-                    ))}
-                    {daySlots.length === 0 && (
-                      <p className="text-xs text-neutral-400">No slots</p>
+                  Add Availability
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {availabilitySlots.map((slot: any) => (
+                  <div 
+                    key={slot.id} 
+                    className={cn(
+                      "p-3 border rounded-lg relative group",
+                      slot.isBooked ? "bg-neutral-100 border-neutral-200" : "border-neutral-200"
+                    )}
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="font-medium">{formatTime(slot.startTime)}</span>
+                      {!slot.isBooked && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => deleteSlotMutation.mutate(slot.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-neutral-500 hover:text-red-500" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="text-sm text-neutral-600">
+                      {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                    </div>
+                    {slot.isBooked ? (
+                      <Badge variant="secondary" className="mt-1">Booked</Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 mt-1">Available</Badge>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Add Availability Dialog */}
+      <Dialog open={isAddSlotDialogOpen} onOpenChange={setIsAddSlotDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add Availability</DialogTitle>
+            <DialogDescription>
+              Create availability slots for patients to book appointments.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Date</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full justify-start text-left font-normal",
+                                !field.value && "text-muted-foreground"
+                              )}
+                            >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {field.value ? formatDate(field.value) : "Select date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0">
+                            <Calendar
+                              mode="single"
+                              selected={field.value ? new Date(field.value) : undefined}
+                              onSelect={(date) => {
+                                if (date) {
+                                  field.onChange(date.toISOString().split('T')[0]);
+                                }
+                              }}
+                              initialFocus
+                              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="startTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start Time</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select start time" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {timeOptions.map((time) => (
+                          <SelectItem key={time} value={time}>
+                            {time}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="duration"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Duration (minutes)</FormLabel>
+                    <Select
+                      onValueChange={(val) => field.onChange(parseInt(val))}
+                      defaultValue={field.value.toString()}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select duration" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="45">45 minutes</SelectItem>
+                        <SelectItem value="60">1 hour</SelectItem>
+                        <SelectItem value="90">1.5 hours</SelectItem>
+                        <SelectItem value="120">2 hours</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="endTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End Time</FormLabel>
+                    <FormControl>
+                      <div className="h-10 px-3 py-2 rounded-md border border-neutral-200 text-neutral-800 bg-neutral-100">
+                        {field.value || "Calculated end time"}
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setIsAddSlotDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={addSlotMutation.isPending}>
+                  {addSlotMutation.isPending ? "Adding..." : "Add Slot"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
