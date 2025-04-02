@@ -6,38 +6,12 @@ import session from 'express-session';
 const getMongoUrl = () => {
   // If we have a direct MongoDB URL, use it
   if (process.env.MONGO_URL) {
-    try {
-      // For mongodb+srv protocol, we need to ensure there's no port specified as it's not allowed
-      if (process.env.MONGO_URL.startsWith('mongodb+srv://')) {
-        const url = new URL(process.env.MONGO_URL);
-        // Return the URL without any port information
-        // We recreate it to ensure standard format
-        return `mongodb+srv://${url.username}:${url.password}@${url.hostname}${url.pathname}${url.search}`;
-      }
-      
-      // For regular mongodb:// URLs, return as is
-      return process.env.MONGO_URL;
-    } catch (error) {
-      console.error('[database] Error parsing MongoDB URL:', error);
-      
-      // If we failed to parse as URL, try a simple port removal for mongodb+srv
-      if (process.env.MONGO_URL.startsWith('mongodb+srv://')) {
-        const parts = process.env.MONGO_URL.split('@');
-        if (parts.length === 2) {
-          // Parts[0] is mongodb+srv://user:pass
-          // Parts[1] is host:port/db
-          const hostDbParts = parts[1].split('/');
-          const hostPart = hostDbParts[0].split(':')[0]; // Remove any port
-          const dbPart = hostDbParts.slice(1).join('/');
-          return `${parts[0]}@${hostPart}/${dbPart}`;
-        }
-      }
-      
-      return process.env.MONGO_URL; // Return the original URL as a fallback
-    }
+    console.log('[database] Using MongoDB URL from environment variable');
+    return process.env.MONGO_URL;
   }
 
   // Default local MongoDB URL for development
+  console.log('[database] Using default local MongoDB URL');
   return 'mongodb://localhost:27017/medibook';
 };
 
