@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { initializeStorage } from "./storage";
 import { initializeDatabase } from "./db";
+import { initializePostgreSQL } from "./db-pg";
 
 // Create Express app
 const app = express();
@@ -43,11 +44,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Initialize and start the application
 (async () => {
   try {
-    // Try to initialize MongoDB
-    const useMongoDB = await initializeDatabase();
+    let useDatabase = false;
+    
+    // Try to initialize PostgreSQL first
+    if (process.env.DATABASE_URL) {
+      useDatabase = await initializePostgreSQL();
+    } 
+    
+    // If PostgreSQL fails, try MongoDB as a fallback
+    if (!useDatabase) {
+      useDatabase = await initializeDatabase();
+    }
     
     // Initialize the appropriate storage
-    await initializeStorage(useMongoDB);
+    await initializeStorage(useDatabase);
     
     // Register routes
     const server = await registerRoutes(app);
