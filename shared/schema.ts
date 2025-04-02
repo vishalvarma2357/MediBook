@@ -33,7 +33,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
-  role: text("role", { enum: Object.values(UserRole) }).notNull().default(UserRole.PATIENT),
+  role: text("role", { enum: [UserRole.PATIENT, UserRole.DOCTOR, UserRole.ADMIN] }).notNull().default(UserRole.PATIENT),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -47,7 +47,7 @@ export const doctorProfiles = pgTable("doctor_profiles", {
   fee: integer("fee").notNull(),
   experience: integer("experience").notNull(),
   about: text("about"),
-  status: text("status", { enum: Object.values(DoctorStatus) }).notNull().default(DoctorStatus.PENDING),
+  status: text("status", { enum: [DoctorStatus.PENDING, DoctorStatus.APPROVED, DoctorStatus.REJECTED] }).notNull().default(DoctorStatus.PENDING),
   rating: integer("rating"),
   reviewCount: integer("review_count").default(0),
   profileImageUrl: text("profile_image_url"),
@@ -74,7 +74,7 @@ export const appointments = pgTable("appointments", {
   date: text("date").notNull(), // Format: YYYY-MM-DD
   startTime: text("start_time").notNull(), // Format: HH:MM (24h)
   endTime: text("end_time").notNull(), // Format: HH:MM (24h)
-  status: text("status", { enum: Object.values(AppointmentStatus) }).notNull().default(AppointmentStatus.PENDING),
+  status: text("status", { enum: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED, AppointmentStatus.CHECKED_IN] }).notNull().default(AppointmentStatus.PENDING),
   reason: text("reason"),
   createdAt: timestamp("created_at").defaultNow(),
 });

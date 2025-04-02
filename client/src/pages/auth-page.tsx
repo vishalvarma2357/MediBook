@@ -30,7 +30,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
-import { loginSchema, patientRegistrationSchema, doctorRegistrationSchema } from "@shared/schema";
+import { loginSchema, patientRegistrationSchema, doctorRegistrationSchema, UserRole } from "@shared/schema";
 
 export default function AuthPage() {
   const [activeTab, setActiveTab] = useState("login");
@@ -63,7 +63,7 @@ export default function AuthPage() {
       confirmPassword: "",
       firstName: "",
       lastName: "",
-      role: "patient",
+      role: UserRole.PATIENT,
     },
   });
 
@@ -78,7 +78,7 @@ export default function AuthPage() {
         confirmPassword: "",
         firstName: "",
         lastName: "",
-        role: "doctor",
+        role: UserRole.DOCTOR,
       },
       profile: {
         specialization: "",
@@ -423,7 +423,13 @@ export default function AuthPage() {
                               <FormItem>
                                 <FormLabel>Consultation Fee ($)</FormLabel>
                                 <FormControl>
-                                  <Input type="number" min="1" {...field} />
+                                  <Input 
+                                    type="number" 
+                                    min="1" 
+                                    {...field} 
+                                    onChange={e => field.onChange(Number(e.target.value))}
+                                    value={field.value}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -436,7 +442,13 @@ export default function AuthPage() {
                               <FormItem>
                                 <FormLabel>Years of Experience</FormLabel>
                                 <FormControl>
-                                  <Input type="number" min="1" {...field} />
+                                  <Input 
+                                    type="number" 
+                                    min="1" 
+                                    {...field} 
+                                    onChange={e => field.onChange(Number(e.target.value))}
+                                    value={field.value}
+                                  />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
